@@ -1,6 +1,7 @@
 use crate::config::*;
 use crate::hash;
 use anyhow::{Context, Result};
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -8,6 +9,161 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Semaphore;
 use walkdir::WalkDir;
+
+// ── Lore-inspired error severity and aggregation ────────────────────
+
+/// Lore-inspired error severity for result aggregation.
+/// Ordered: None < Skipped < Warning < Error < Fatal
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[allow(dead_code)]
+pub enum CopySeverity {
+    None = 0,
+    Skipped = 1,
+    Warning = 2,
+    Error = 3,
+    Fatal = 4,
+}
+
+impl fmt::Display for CopySeverity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CopySeverity::None => write!(f, "OK"),
+            CopySeverity::Skipped => write!(f, "SKIP"),
+            CopySeverity::Warning => write!(f, "WARN"),
+            CopySeverity::Error => write!(f, "ERR"),
+            CopySeverity::Fatal => write!(f, "FATAL"),
+        }
+    }
+}
+
+/// Lore-inspired copy outcome: result of copying one file pair.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+#[allow(dead_code)]
+pub struct CopyOutcome {
+    pub src: PathBuf,
+    pub dst: PathBuf,
+    pub severity: CopySeverity,
+    pub message: String,
+    pub bytes_copied: u64,
+}
+
+impl CopyOutcome {
+    pub fn success(src: PathBuf, dst: PathBuf, bytes: u64) -> Self {
+        Self {
+            src,
+            dst,
+            severity: CopySeverity::None,
+            message: String::new(),
+            bytes_copied: bytes,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn skipped(src: PathBuf, dst: PathBuf) -> Self {
+        Self {
+            src,
+            dst,
+            severity: CopySeverity::Skipped,
+            message: "Skipped (already exists)".into(),
+            bytes_copied: 0,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn warning(src: PathBuf, dst: PathBuf, msg: impl Into<String>) -> Self {
+        Self {
+            src,
+            dst,
+            severity: CopySeverity::Warning,
+            message: msg.into(),
+            bytes_copied: 0,
+        }
+    }
+
+    pub fn error(src: PathBuf, dst: PathBuf, msg: impl Into<String>) -> Self {
+        Self {
+            src,
+            dst,
+            severity: CopySeverity::Error,
+            message: msg.into(),
+            bytes_copied: 0,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn fatal(msg: impl Into<String>) -> Self {
+        Self {
+            src: PathBuf::new(),
+            dst: PathBuf::new(),
+            severity: CopySeverity::Fatal,
+            message: msg.into(),
+            bytes_copied: 0,
+        }
+    }
+}
+
+/// Aggregated result of a batch copy operation.
+#[derive(Debug, Clone, Default)]
+pub struct EngineResult {
+    pub outcomes: Vec<CopyOutcome>,
+    pub total_bytes: u64,
+    pub copied_bytes: u64,
+}
+
+impl EngineResult {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Count outcomes at or above the given severity.
+    pub fn count(&self, min_severity: CopySeverity) -> usize {
+        self.outcomes
+            .iter()
+            .filter(|o| o.severity >= min_severity)
+            .count()
+    }
+
+    pub fn errors(&self) -> impl Iterator<Item = &CopyOutcome> {
+        self.outcomes.iter().filter(|o| o.severity >= CopySeverity::Error)
+    }
+
+    #[allow(dead_code)]
+    pub fn has_errors(&self) -> bool {
+        self.count(CopySeverity::Error) > 0
+    }
+
+    /// Merge another EngineResult into this one (for combining parallel batches).
+    #[allow(dead_code)]
+    pub fn merge(&mut self, other: EngineResult) {
+        self.outcomes.extend(other.outcomes);
+        self.total_bytes += other.total_bytes;
+        self.copied_bytes += other.copied_bytes;
+    }
+
+    fn display_severity_summary(&self) -> String {
+        let total = self.outcomes.len();
+        let ok = self.count(CopySeverity::None);
+        let skipped = self.count(CopySeverity::Skipped) - self.count(CopySeverity::Error); // Skipped excludes Error+
+        let errors = self.count(CopySeverity::Error);
+        if errors > 0 {
+            format!(
+                "{} files: {} OK, {} skipped, {} errors",
+                total, ok, skipped, errors
+            )
+        } else if skipped > 0 {
+            format!("{} files: {} OK, {} skipped", total, ok, skipped)
+        } else {
+            format!("{} files: {} OK", total, ok)
+        }
+    }
+}
+
+impl fmt::Display for EngineResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.display_severity_summary())
+    }
+}
 
 /// Get file size (for pre-scanning file list in shell integration)
 pub fn get_file_size(path: &Path) -> u64 {
@@ -23,51 +179,6 @@ pub fn get_file_size(path: &Path) -> u64 {
             .sum()
     } else {
         0
-    }
-}
-
-/// Lore-inspired error severity for result aggregation
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[allow(dead_code)]
-pub enum CopySeverity {
-    None = 0,
-    Skipped = 1,
-    Warning = 2,
-    Error = 3,
-    Fatal = 4,
-}
-
-/// Lore-inspired copy outcome (cf. Lore's CopyOutcome + LoreErrorCode)
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct CopyOutcome {
-    pub src: PathBuf,
-    pub dst: PathBuf,
-    pub severity: CopySeverity,
-    pub message: String,
-    pub bytes_copied: u64,
-}
-
-impl CopyOutcome {
-    #[allow(dead_code)]
-    pub fn success(src: PathBuf, dst: PathBuf, bytes: u64) -> Self {
-        Self {
-            src,
-            dst,
-            severity: CopySeverity::None,
-            message: String::new(),
-            bytes_copied: bytes,
-        }
-    }
-    #[allow(dead_code)]
-    pub fn error(src: PathBuf, dst: PathBuf, msg: String) -> Self {
-        Self {
-            src,
-            dst,
-            severity: CopySeverity::Error,
-            message: msg,
-            bytes_copied: 0,
-        }
     }
 }
 
@@ -283,7 +394,8 @@ pub async fn copy_file_with_move(
     )
 }
 
-/// Run the copy engine with multiple parallel workers
+/// Run the copy engine with multiple parallel workers.
+/// Returns aggregated results with per-file outcomes.
 pub async fn run_copy_engine(
     files: Vec<(PathBuf, PathBuf)>,
     config: Arc<CopyConfig>,
@@ -292,7 +404,7 @@ pub async fn run_copy_engine(
     pause: Option<Arc<AtomicBool>>,
     bytes_total: Arc<AtomicU64>,
     bytes_done: Arc<AtomicU64>,
-) -> Result<()> {
+) -> EngineResult {
     run_copy_engine_inner(
         files,
         config,
@@ -306,7 +418,8 @@ pub async fn run_copy_engine(
     .await
 }
 
-/// Run copy engine in move mode (deletes source after copy)
+/// Run copy engine in move mode (deletes source after copy).
+/// Returns aggregated results with per-file outcomes.
 pub async fn run_move_engine(
     files: Vec<(PathBuf, PathBuf)>,
     config: Arc<CopyConfig>,
@@ -315,7 +428,7 @@ pub async fn run_move_engine(
     pause: Option<Arc<AtomicBool>>,
     bytes_total: Arc<AtomicU64>,
     bytes_done: Arc<AtomicU64>,
-) -> Result<()> {
+) -> EngineResult {
     run_copy_engine_inner(
         files,
         config,
@@ -329,7 +442,9 @@ pub async fn run_move_engine(
     .await
 }
 
-/// ★ Lore-inspired: internal parallel engine with move mode support
+/// ★ Lore-inspired: internal parallel engine with outcome aggregation.
+/// Continues on errors (does not stop at first failure).
+/// Returns aggregated EngineResult with per-file outcomes.
 async fn run_copy_engine_inner(
     files: Vec<(PathBuf, PathBuf)>,
     config: Arc<CopyConfig>,
@@ -339,16 +454,15 @@ async fn run_copy_engine_inner(
     bytes_total: Arc<AtomicU64>,
     bytes_done: Arc<AtomicU64>,
     move_mode: bool,
-) -> Result<()> {
+) -> EngineResult {
     let semaphore = Arc::new(Semaphore::new(config.threads));
+    let result_agg = Arc::new(std::sync::Mutex::new(EngineResult::new()));
     let mut handles = Vec::new();
 
     for (src, dst) in files {
-        let permit = semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .context("Failed to acquire semaphore permit")?;
+        let permit = semaphore.clone().acquire_owned().await.unwrap_or_else(|_| {
+            panic!("Failed to acquire semaphore permit");
+        });
 
         let config = config.clone();
         let sender = progress_sender.clone();
@@ -356,16 +470,24 @@ async fn run_copy_engine_inner(
         let pause = pause.clone();
         let bt = bytes_total.clone();
         let bd = bytes_done.clone();
+        let agg = result_agg.clone();
 
         handles.push(tokio::spawn(async move {
             let _permit = permit;
-            let result = if move_mode {
-                copy_file_with_move(&src, &dst, &config, sender, cancel, pause, bt, bd).await
+            let outcome = if move_mode {
+                match copy_file_with_move(&src, &dst, &config, sender, cancel, pause, bt, bd).await
+                {
+                    Ok(()) => CopyOutcome::success(src.clone(), dst.clone(), 0),
+                    Err(e) => CopyOutcome::error(src.clone(), dst.clone(), format!("{:#}", e)),
+                }
             } else {
-                copy_file(&src, &dst, &config, sender, cancel, pause, bt, bd).await
+                match copy_file(&src, &dst, &config, sender, cancel, pause, bt, bd).await {
+                    Ok(()) => CopyOutcome::success(src.clone(), dst.clone(), 0),
+                    Err(e) => CopyOutcome::error(src.clone(), dst.clone(), format!("{:#}", e)),
+                }
             };
-            if let Err(e) = result {
-                tracing::error!("Failed to copy {}: {:#}", src.display(), e);
+            if let Ok(mut agg) = agg.lock() {
+                agg.outcomes.push(outcome);
             }
         }));
     }
@@ -374,5 +496,6 @@ async fn run_copy_engine_inner(
         let _ = h.await;
     }
 
-    Ok(())
+    let final_result = result_agg.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    final_result
 }

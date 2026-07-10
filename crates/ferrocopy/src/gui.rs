@@ -6,6 +6,7 @@
 //!   - Pause/Resume: task lifecycle management (cf. ZED tasks.rs)
 
 use crate::config::*;
+use crate::dot;
 use crate::engine;
 use eframe::egui;
 use std::path::PathBuf;
@@ -223,6 +224,10 @@ pub struct FerroCopyApp {
     cmd_tx: std_mpsc::Sender<EngineCommand>,
     /// Progress updates from the engine
     progress_rx: Arc<Mutex<Option<std_mpsc::Receiver<ProgressUpdate>>>>,
+    /// Dot design: background particle system
+    particle_system: dot::ParticleSystem,
+    /// Animation time accumulator
+    time: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -254,6 +259,8 @@ impl FerroCopyApp {
             bytes_done: Arc::new(AtomicU64::new(0)),
             cmd_tx,
             progress_rx: Arc::new(Mutex::new(Some(progress_rx))),
+            particle_system: dot::ParticleSystem::new(60),
+            time: 0.0,
         }
     }
 
@@ -315,12 +322,27 @@ impl eframe::App for FerroCopyApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
 
+        // ── Dot design: accumulate animation time ──
+        let dt = ctx.input(|i| i.unstable_dt) as f32;
+        self.time += dt as f64;
+
+        // ── Dot design: background particle layer ──
+        let ps = &mut self.particle_system;
+        egui::Area::new("particle_bg".into())
+            .order(egui::Order::Background)
+            .show(ctx, |ui| {
+                let rect = ui.max_rect();
+                ps.update(dt, &rect);
+                let painter = ui.painter();
+                ps.paint(painter, &rect);
+            });
+
         // ── Top bar ──
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.heading("⚡ FerroCopy");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("About").clicked() {
+                    if dot::dot_button(ui, "About", true, self.time) {
                         self.state.lock().unwrap().show_about = true;
                     }
                 });
@@ -378,7 +400,7 @@ impl eframe::App for FerroCopyApp {
                     ui.colored_label(egui::Color32::RED, &state.error_message);
                 }
             });
-            ui.separator();
+            dot::dot_separator(ui, self.time);
 
             // ── Shell integration: process pending sources from context menu ──
             if state.pending_add && !state.shell_sources.is_empty() {
@@ -466,12 +488,14 @@ impl eframe::App for FerroCopyApp {
                 }
             });
 
-            ui.separator();
+            dot::dot_separator(ui, self.time);
 
             // ── Options ──
             ui.horizontal(|ui| {
-                ui.checkbox(&mut state.recursive, "Recursive");
-                ui.checkbox(&mut state.verify, "Verify hash");
+                dot::dot_checkbox(ui, &mut state.recursive, self.time);
+                ui.label("Recursive");
+                dot::dot_checkbox(ui, &mut state.verify, self.time);
+                ui.label("Verify hash");
             });
             ui.horizontal(|ui| {
                 ui.label("Hash:");
@@ -489,7 +513,7 @@ impl eframe::App for FerroCopyApp {
                 ui.label(format!("  Threads: {}", state.threads));
             });
 
-            ui.separator();
+            dot::dot_separator(ui, self.time);
 
             // ── Action buttons ──
             let can_start = !state.source.is_empty()
@@ -504,20 +528,12 @@ impl eframe::App for FerroCopyApp {
             let mut cancel_clicked: bool = false;
             let mut clear_clicked: bool = false;
             ui.horizontal(|ui| {
-                start_clicked = ui
-                    .add_enabled(can_start, egui::Button::new("▶ Start"))
-                    .clicked();
-                pause_clicked = ui
-                    .add_enabled(is_copying, egui::Button::new("⏸ Pause"))
-                    .clicked();
-                resume_clicked = ui
-                    .add_enabled(is_paused, egui::Button::new("▶ Resume"))
-                    .clicked();
-                cancel_clicked = ui
-                    .add_enabled(is_copying || is_paused, egui::Button::new("⏹ Cancel"))
-                    .clicked();
+                start_clicked = dot::dot_button(ui, "▶ Start", can_start, self.time);
+                pause_clicked = dot::dot_button(ui, "⏸ Pause", is_copying, self.time);
+                resume_clicked = dot::dot_button(ui, "▶ Resume", is_paused, self.time);
+                cancel_clicked = dot::dot_button(ui, "⏹ Cancel", is_copying || is_paused, self.time);
                 let show_clear = matches!(state.status, AppStatus::Done | AppStatus::Error);
-                clear_clicked = show_clear && ui.button("Clear").clicked();
+                clear_clicked = show_clear && dot::dot_button(ui, "Clear", show_clear, self.time);
             });
 
             // Snapshot values to use after dropping the lock
@@ -605,7 +621,7 @@ impl eframe::App for FerroCopyApp {
                         for entry in &state.files {
                             ui.horizontal(|ui| {
                                 ui.label(&entry.name);
-                                ui.add(egui::ProgressBar::new(entry.progress).desired_width(120.0));
+                                dot::dot_progress_bar(ui, entry.progress, 120.0, false, self.time);
                                 ui.label(&entry.status);
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
@@ -626,7 +642,7 @@ impl eframe::App for FerroCopyApp {
                 state.status,
                 AppStatus::Copying | AppStatus::Paused | AppStatus::Done
             ) {
-                ui.separator();
+                dot::dot_separator(ui, self.time);
                 let total = self.bytes_total.load(Ordering::Relaxed);
                 let done = self.bytes_done.load(Ordering::Relaxed);
                 if total > 0 {
@@ -635,17 +651,9 @@ impl eframe::App for FerroCopyApp {
                         humansize::format_size(done, humansize::BINARY),
                         humansize::format_size(total, humansize::BINARY),
                     ));
-                    let ratio = done as f64 / total as f64;
-                    let pb_color = if state.status == AppStatus::Paused {
-                        egui::Color32::YELLOW
-                    } else {
-                        egui::Color32::from_rgb(80, 180, 255)
-                    };
-                    ui.add(
-                        egui::ProgressBar::new(ratio as f32)
-                            .text(format!("{:.1}%", ratio * 100.0))
-                            .fill(pb_color),
-                    );
+                    let ratio = done as f32 / total as f32;
+                    let paused = state.status == AppStatus::Paused;
+                    dot::dot_progress_bar(ui, ratio, ui.available_width(), paused, self.time);
                 }
                 if !state.current_file.is_empty() {
                     ui.label(format!("File: {}", state.current_file));
@@ -663,7 +671,7 @@ impl eframe::App for FerroCopyApp {
 
             // ── Log ──
             if !state.log.is_empty() {
-                ui.separator();
+                dot::dot_separator(ui, self.time);
                 egui::ScrollArea::vertical()
                     .max_height(100.0)
                     .show(ui, |ui| {
@@ -991,15 +999,26 @@ fn engine_worker(
                     engine_result
                 });
 
-                let is_done = true;
-                let error = result
-                    .as_ref()
-                    .err()
-                    .map(|e| format!("{:#}", e))
-                    .unwrap_or_default();
-                let log = match &result {
-                    Ok(_) => vec!["✓ Copy complete!".to_string()],
-                    Err(e) => vec![format!("✗ Error: {}", e)],
+                let (is_done, error, log) = {
+                    let eng = result;
+                    let err_count = eng.errors().count();
+                    let err_msg = if err_count > 0 {
+                        let first = eng.errors().next().map(|o| o.message.clone()).unwrap_or_default();
+                        format!("{} error(s): {}", err_count, first)
+                    } else {
+                        String::new()
+                    };
+                    let log = if err_count > 0 {
+                        let mut lines = vec![format!("✗ {} file(s) had errors", err_count)];
+                        for o in eng.errors() {
+                            lines.push(format!("  ✗ {}: {}", o.src.display(), o.message));
+                        }
+                        lines
+                    } else {
+                        let n = eng.outcomes.len();
+                        vec![format!("✓ Copy complete: {} file(s) OK", n)]
+                    };
+                    (true, err_msg, log)
                 };
                 let _ = progress_tx.send(ProgressUpdate {
                     file: String::new(),

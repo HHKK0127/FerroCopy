@@ -1,4 +1,5 @@
 mod config;
+mod dot;
 mod engine;
 mod gui;
 mod hash;
@@ -286,7 +287,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let engine_bd = bytes_done.clone();
 
     if cli.move_files {
-        engine::run_move_engine(
+        let result = engine::run_move_engine(
             files,
             engine_config,
             engine_tx,
@@ -295,10 +296,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             engine_bt,
             engine_bd,
         )
-        .await?;
+        .await;
         println!("✓ Files moved (source deleted).");
+        println!("  {}", result);
     } else {
-        engine::run_copy_engine(
+        let result = engine::run_copy_engine(
             files,
             engine_config,
             engine_tx,
@@ -307,7 +309,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             engine_bt,
             engine_bd,
         )
-        .await?;
+        .await;
+        println!("  {}", result);
     }
 
     // Wait a moment for progress display to update

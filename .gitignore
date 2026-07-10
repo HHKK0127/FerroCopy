@@ -1,4 +1,6 @@
 /target
+plan.md
+
 *.exe
 *.lnk
 *.vbs
