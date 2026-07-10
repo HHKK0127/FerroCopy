@@ -32,6 +32,54 @@ pub fn run_gui() {
     );
 }
 
+/// Launch GUI with pre-populated source files (shell copy)
+pub fn run_gui_with_sources(sources: Vec<String>) {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([900.0, 650.0])
+            .with_resizable(true)
+            .with_title("FerroCopy — Shell Copy"),
+        ..Default::default()
+    };
+    let _ = eframe::run_native(
+        "FerroCopy",
+        options,
+        Box::new(|_cc| Ok(Box::new(FerroCopyApp::with_sources(sources)) as Box<dyn eframe::App>)),
+    );
+}
+
+/// Launch GUI with source files in move mode (shell move, deletes after copy)
+pub fn run_gui_with_sources_move(sources: Vec<String>) {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([900.0, 650.0])
+            .with_resizable(true)
+            .with_title("FerroCopy — Shell Move"),
+        ..Default::default()
+    };
+    let _ = eframe::run_native(
+        "FerroCopy",
+        options,
+        Box::new(|_cc| Ok(Box::new(FerroCopyApp::with_sources_move(sources)) as Box<dyn eframe::App>)),
+    );
+}
+
+/// Launch GUI with a pre-set destination (shell paste from folder bg)
+pub fn run_gui_with_destination(dest: String) {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([900.0, 650.0])
+            .with_resizable(true)
+            .with_title("FerroCopy — Paste"),
+        ..Default::default()
+    };
+    let _ = eframe::run_native(
+        "FerroCopy",
+        options,
+        Box::new(|_cc| Ok(Box::new(FerroCopyApp::with_destination(dest)) as Box<dyn eframe::App>)),
+    );
+}
+
 // ── State types ──────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,6 +98,8 @@ struct FileEntry {
     size: u64,
     progress: f32,
     status: String,
+    selected: bool,
+    error: String,
 }
 
 /// Commands the GUI sends to the engine worker thread
@@ -120,7 +170,13 @@ struct GuiState {
     // ZED-inspired: status bar items
     elapsed_secs: f64,
     eta_secs: f64,
-}
+        // Shell integration: pre-populated sources from context menu
+        shell_sources: Vec<String>,
+        // Shell integration: move mode (delete after copy)
+        move_mode: bool,
+        // Shell integration: flag to process pending sources
+        pending_add: bool,
+    }
 
 impl Default for GuiState {
     fn default() -> Self {
@@ -142,11 +198,14 @@ impl Default for GuiState {
             toasts: Vec::new(),
             elapsed_secs: 0.0,
             eta_secs: 0.0,
-        }
-    }
-}
+                        shell_sources: Vec::new(),
+                        move_mode: false,
+                        pending_add: false,
+                    }
+                }
+            }
 
-// ── The egui app ─────────────────────────────────────────────────────
+            // ── The egui app ─────────────────────────────────────────────────────
 
 pub struct FerroCopyApp {
     state: Arc<Mutex<GuiState>>,
@@ -191,6 +250,39 @@ impl FerroCopyApp {
             cmd_tx,
             progress_rx: Arc::new(Mutex::new(Some(progress_rx))),
         }
+    }
+
+    /// Create app with pre-populated source files (shell context menu)
+    pub fn with_sources(sources: Vec<String>) -> Self {
+            let app = Self::new();
+        {
+            let mut state = app.state.lock().unwrap();
+            state.shell_sources = sources;
+            state.pending_add = true;
+        }
+        app
+    }
+
+    /// Create app in move mode (delete after copy) with sources
+    pub fn with_sources_move(sources: Vec<String>) -> Self {
+            let app = Self::new();
+        {
+            let mut state = app.state.lock().unwrap();
+            state.shell_sources = sources;
+            state.move_mode = true;
+            state.pending_add = true;
+        }
+        app
+    }
+
+    /// Create app with a pre-set destination (shell paste)
+    pub fn with_destination(dest: String) -> Self {
+            let app = Self::new();
+        {
+            let mut state = app.state.lock().unwrap();
+            state.destination = dest;
+        }
+        app
     }
 }
 
@@ -283,7 +375,49 @@ impl eframe::App for FerroCopyApp {
             });
             ui.separator();
 
-            // ── Source ──
+                        // ── Shell integration: process pending sources from context menu ──
+                        if state.pending_add && !state.shell_sources.is_empty() {
+                            let sources = state.shell_sources.clone();
+                            state.shell_sources.clear();
+                            state.pending_add = false;
+                            if sources.len() == 1 {
+                                state.source = sources[0].clone();
+                            } else {
+                                if let Some(parent) = std::path::Path::new(&sources[0]).parent() {
+                                    state.source = parent.display().to_string();
+                                } else {
+                                    state.source = sources[0].clone();
+                                }
+                            }
+                            for path in &sources {
+                                if !state.files.iter().any(|f| f.name == *path) {
+                                    let path_obj = std::path::Path::new(path);
+                                    let size = crate::engine::get_file_size(path_obj);
+                                    state.files.push(FileEntry {
+                                        name: path.clone(),
+                                        size,
+                                        progress: 0.0,
+                                        status: "Pending".to_string(),
+                                        selected: true,
+                                        error: String::new(),
+                                    });
+                                }
+                            }
+                            state.log.push(format!("📥 Shell: {} file(s) loaded", sources.len()));
+                            if state.move_mode {
+                                state.log.push("🔁 Move mode: files will be deleted after copy".to_string());
+                            }
+                        }
+
+                        // ── Shell integration: move mode indicator ──
+                        if state.move_mode {
+                            ui.horizontal(|ui| {
+                                ui.colored_label(egui::Color32::GOLD, "🔁 Move Mode");
+                                ui.label("(Source files will be deleted after copy)");
+                            });
+                        }
+
+                        // ── Source ──
             ui.horizontal(|ui| {
                 ui.label("Source:");
                 let mut src = state.source.clone();

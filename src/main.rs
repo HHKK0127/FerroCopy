@@ -2,6 +2,7 @@ mod config;
 mod engine;
 mod gui;
 mod hash;
+mod shell;
 
 use clap::Parser;
 use std::path::PathBuf;
@@ -46,9 +47,33 @@ struct Cli {
     /// Launch in GUI mode
     #[arg(long)]
     gui: bool,
-}
 
-#[derive(Clone, Debug)]
+        /// Move mode: delete source after copy (CLI)
+        #[arg(long)]
+        move_files: bool,
+
+        /// Install shell integration (right-click menu, Send To, paste handler)
+        #[arg(long)]
+        install_context: bool,
+
+        /// Uninstall shell integration
+        #[arg(long)]
+        uninstall_context: bool,
+
+        /// Shell copy action (invoked by right-click menu)
+        #[arg(long)]
+        shell_copy: bool,
+
+        /// Shell move action (invoked by right-click menu)
+        #[arg(long)]
+        shell_move: bool,
+
+        /// Shell paste action (invoked by folder background)
+        #[arg(long)]
+        shell_paste: bool,
+    }
+
+    #[derive(Clone, Debug)]
 enum HashAlgorithm {
     Blake3,
     Xxh3,
@@ -86,6 +111,32 @@ impl std::str::FromStr for OverwriteModeArg {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // ── Shell integration commands ──
+    if cli.install_context {
+        return shell::install().map_err(|e| anyhow::anyhow!("{:#}", e));
+    }
+    if cli.uninstall_context {
+        return shell::uninstall().map_err(|e| anyhow::anyhow!("{:#}", e));
+    }
+
+    // ── Shell action: copy from context menu ──
+    if cli.shell_copy {
+        let paths: Vec<String> = cli.source.iter().map(|p| p.display().to_string()).collect();
+        return shell::handle_shell_copy(paths);
+    }
+
+    // ── Shell action: move from context menu ──
+    if cli.shell_move {
+        let paths: Vec<String> = cli.source.iter().map(|p| p.display().to_string()).collect();
+        return shell::handle_shell_move(paths);
+    }
+
+    // ── Shell action: paste from folder background ──
+    if cli.shell_paste {
+        let dest = cli.source.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+        return shell::handle_shell_paste(dest);
+    }
 
     if cli.gui {
         tracing_subscriber::fmt().with_env_filter(EnvFilter::new("ferrocopy=error"))
@@ -218,7 +269,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let engine_bt = bytes_total.clone();
     let engine_bd = bytes_done.clone();
 
-    engine::run_copy_engine(files, engine_config, engine_tx, engine_cancel, None, engine_bt, engine_bd).await?;
+    if cli.move_files {
+        engine::run_move_engine(files, engine_config, engine_tx, engine_cancel, None, engine_bt, engine_bd).await?;
+        println!("✓ Files moved (source deleted).");
+    } else {
+        engine::run_copy_engine(files, engine_config, engine_tx, engine_cancel, None, engine_bt, engine_bd).await?;
+    }
 
     // Wait a moment for progress display to update
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;

@@ -9,6 +9,52 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Semaphore;
 use walkdir::WalkDir;
 
+/// Get file size (for pre-scanning file list in shell integration)
+pub fn get_file_size(path: &Path) -> u64 {
+    if path.is_file() {
+        std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+    } else if path.is_dir() {
+        WalkDir::new(path)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .filter_map(|e| std::fs::metadata(e.path()).ok())
+            .map(|m| m.len())
+            .sum()
+    } else {
+        0
+    }
+}
+
+/// Lore-inspired error severity for result aggregation
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CopySeverity {
+    None = 0,
+    Skipped = 1,
+    Warning = 2,
+    Error = 3,
+    Fatal = 4,
+}
+
+/// Lore-inspired copy outcome (cf. Lore's CopyOutcome + LoreErrorCode)
+#[derive(Debug, Clone)]
+pub struct CopyOutcome {
+    pub src: PathBuf,
+    pub dst: PathBuf,
+    pub severity: CopySeverity,
+    pub message: String,
+    pub bytes_copied: u64,
+}
+
+impl CopyOutcome {
+    pub fn success(src: PathBuf, dst: PathBuf, bytes: u64) -> Self {
+        Self { src, dst, severity: CopySeverity::None, message: String::new(), bytes_copied: bytes }
+    }
+    pub fn error(src: PathBuf, dst: PathBuf, msg: String) -> Self {
+        Self { src, dst, severity: CopySeverity::Error, message: msg, bytes_copied: 0 }
+    }
+}
+
 /// Collect files to copy (recursively or single file)
 pub fn collect_files(src: &Path, dest: &Path, recursive: bool) -> Result<Vec<(PathBuf, PathBuf)>> {
     let mut pairs = Vec::new();
@@ -160,6 +206,42 @@ pub async fn copy_file(
     Ok(())
 }
 
+    /// Copy a file and optionally delete the source after success (move mode)
+    /// Lore-inspired: 3-try delete with backoff
+    pub async fn copy_file_with_move(
+        src: &Path,
+        dst: &Path,
+        config: &CopyConfig,
+        progress_sender: tokio::sync::mpsc::UnboundedSender<FileProgress>,
+        cancel: Arc<AtomicBool>,
+        pause: Option<Arc<AtomicBool>>,
+        bytes_total: Arc<AtomicU64>,
+        bytes_done: Arc<AtomicU64>,
+    ) -> Result<()> {
+        copy_file(src, dst, config, progress_sender, cancel, pause, bytes_total, bytes_done).await?;
+
+        let mut last_err = None;
+        for attempt in 1..=3 {
+            match tokio::fs::remove_file(src).await {
+                Ok(_) => {
+                    tracing::info!("Moved (deleted source): {}", src.display());
+                    return Ok(());
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    if attempt < 3 {
+                        tokio::time::sleep(Duration::from_millis(100 * attempt)).await;
+                    }
+                }
+            }
+        }
+        anyhow::bail!(
+            "Failed to delete source after copy ({}): {:#}",
+            src.display(),
+            last_err.unwrap()
+        )
+    }
+
 /// Run the copy engine with multiple parallel workers
 pub async fn run_copy_engine(
     files: Vec<(PathBuf, PathBuf)>,
@@ -169,6 +251,33 @@ pub async fn run_copy_engine(
     pause: Option<Arc<AtomicBool>>,
     bytes_total: Arc<AtomicU64>,
     bytes_done: Arc<AtomicU64>,
+) -> Result<()> {
+    run_copy_engine_inner(files, config, progress_sender, cancel, pause, bytes_total, bytes_done, false).await
+}
+
+/// Run copy engine in move mode (deletes source after copy)
+pub async fn run_move_engine(
+    files: Vec<(PathBuf, PathBuf)>,
+    config: Arc<CopyConfig>,
+    progress_sender: tokio::sync::mpsc::UnboundedSender<FileProgress>,
+    cancel: Arc<AtomicBool>,
+    pause: Option<Arc<AtomicBool>>,
+    bytes_total: Arc<AtomicU64>,
+    bytes_done: Arc<AtomicU64>,
+) -> Result<()> {
+    run_copy_engine_inner(files, config, progress_sender, cancel, pause, bytes_total, bytes_done, true).await
+}
+
+/// ★ Lore-inspired: internal parallel engine with move mode support
+async fn run_copy_engine_inner(
+    files: Vec<(PathBuf, PathBuf)>,
+    config: Arc<CopyConfig>,
+    progress_sender: tokio::sync::mpsc::UnboundedSender<FileProgress>,
+    cancel: Arc<AtomicBool>,
+    pause: Option<Arc<AtomicBool>>,
+    bytes_total: Arc<AtomicU64>,
+    bytes_done: Arc<AtomicU64>,
+    move_mode: bool,
 ) -> Result<()> {
     let semaphore = Arc::new(Semaphore::new(config.threads));
     let mut handles = Vec::new();
@@ -189,7 +298,12 @@ pub async fn run_copy_engine(
 
         handles.push(tokio::spawn(async move {
             let _permit = permit;
-            if let Err(e) = copy_file(&src, &dst, &config, sender, cancel, pause, bt, bd).await {
+            let result = if move_mode {
+                copy_file_with_move(&src, &dst, &config, sender, cancel, pause, bt, bd).await
+            } else {
+                copy_file(&src, &dst, &config, sender, cancel, pause, bt, bd).await
+            };
+            if let Err(e) = result {
                 tracing::error!("Failed to copy {}: {:#}", src.display(), e);
             }
         }));
