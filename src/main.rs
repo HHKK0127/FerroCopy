@@ -12,7 +12,11 @@ use tracing_subscriber::EnvFilter;
 
 /// FerroCopy — A high-performance file copy tool inspired by TeraCopy
 #[derive(Parser)]
-#[command(name = "ferrocopy", version = "0.1.0", about = "Fast parallel file copy with hash verification")]
+#[command(
+    name = "ferrocopy",
+    version = "0.1.0",
+    about = "Fast parallel file copy with hash verification"
+)]
 struct Cli {
     /// Source file or directory (optional in GUI mode)
     source: Option<PathBuf>,
@@ -48,32 +52,32 @@ struct Cli {
     #[arg(long)]
     gui: bool,
 
-        /// Move mode: delete source after copy (CLI)
-        #[arg(long)]
-        move_files: bool,
+    /// Move mode: delete source after copy (CLI)
+    #[arg(long)]
+    move_files: bool,
 
-        /// Install shell integration (right-click menu, Send To, paste handler)
-        #[arg(long)]
-        install_context: bool,
+    /// Install shell integration (right-click menu, Send To, paste handler)
+    #[arg(long)]
+    install_context: bool,
 
-        /// Uninstall shell integration
-        #[arg(long)]
-        uninstall_context: bool,
+    /// Uninstall shell integration
+    #[arg(long)]
+    uninstall_context: bool,
 
-        /// Shell copy action (invoked by right-click menu)
-        #[arg(long)]
-        shell_copy: bool,
+    /// Shell copy action (invoked by right-click menu)
+    #[arg(long)]
+    shell_copy: bool,
 
-        /// Shell move action (invoked by right-click menu)
-        #[arg(long)]
-        shell_move: bool,
+    /// Shell move action (invoked by right-click menu)
+    #[arg(long)]
+    shell_move: bool,
 
-        /// Shell paste action (invoked by folder background)
-        #[arg(long)]
-        shell_paste: bool,
-    }
+    /// Shell paste action (invoked by folder background)
+    #[arg(long)]
+    shell_paste: bool,
+}
 
-    #[derive(Clone, Debug)]
+#[derive(Clone, Debug)]
 enum HashAlgorithm {
     Blake3,
     Xxh3,
@@ -134,13 +138,20 @@ fn main() -> anyhow::Result<()> {
 
     // ── Shell action: paste from folder background ──
     if cli.shell_paste {
-        let dest = cli.source.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+        let dest = cli
+            .source
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
         return shell::handle_shell_paste(dest);
     }
 
     if cli.gui {
-        tracing_subscriber::fmt().with_env_filter(EnvFilter::new("ferrocopy=error"))
-            .with_target(false).with_line_number(false).init();
+        tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::new("ferrocopy=error"))
+            .with_target(false)
+            .with_line_number(false)
+            .init();
         gui::run_gui();
         return Ok(());
     }
@@ -243,7 +254,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 break;
             }
             // Track completed files for progress bar
-            if progress.bytes_copied >= progress.total_bytes && progress.total_bytes > 0
+            if progress.bytes_copied >= progress.total_bytes
+                && progress.total_bytes > 0
                 && !last_files.contains(&progress.file)
             {
                 last_files.push(progress.file.clone());
@@ -251,7 +263,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
             let total_bytes = pb_bytes_done.load(Ordering::Relaxed);
             let elapsed = start.elapsed().as_secs_f64();
-            let speed = if elapsed > 0.0 { total_bytes as f64 / elapsed } else { 0.0 };
+            let speed = if elapsed > 0.0 {
+                total_bytes as f64 / elapsed
+            } else {
+                0.0
+            };
             let speed_str = humansize::format_size(speed as u64, humansize::BINARY);
             pb.set_message(format!("{}/s - {}", speed_str, progress.file.display()));
         }
@@ -270,10 +286,28 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let engine_bd = bytes_done.clone();
 
     if cli.move_files {
-        engine::run_move_engine(files, engine_config, engine_tx, engine_cancel, None, engine_bt, engine_bd).await?;
+        engine::run_move_engine(
+            files,
+            engine_config,
+            engine_tx,
+            engine_cancel,
+            None,
+            engine_bt,
+            engine_bd,
+        )
+        .await?;
         println!("✓ Files moved (source deleted).");
     } else {
-        engine::run_copy_engine(files, engine_config, engine_tx, engine_cancel, None, engine_bt, engine_bd).await?;
+        engine::run_copy_engine(
+            files,
+            engine_config,
+            engine_tx,
+            engine_cancel,
+            None,
+            engine_bt,
+            engine_bd,
+        )
+        .await?;
     }
 
     // Wait a moment for progress display to update

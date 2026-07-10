@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-util", "sync", "fs", "time", "macros"] }
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.17"
 blake3 = "1"
@@ -24,3 +24,8 @@ parking_lot = "0.12"
 winreg = "0.52"
 shellexpand = "3"
 windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

@@ -135,8 +135,7 @@ Shortcut.Save
     );
 
     let vbs_path = std::env::temp_dir().join("ferrocopy_sendto.vbs");
-    std::fs::write(&vbs_path, vbs_script)
-        .context("Failed to write temporary VBS script")?;
+    std::fs::write(&vbs_path, vbs_script).context("Failed to write temporary VBS script")?;
 
     let output = Command::new("cscript.exe")
         .args(["/nologo", &vbs_path.to_string_lossy()])
@@ -172,13 +171,13 @@ fn get_sendto_path() -> Result<PathBuf> {
         .get_value("{9E3995AB-1F9C-4F13-B827-48B24B6C7174}")
         .or_else(|_| sendto_key.get_value("SendTo"))
         .unwrap_or_else(|_| {
-            let home = std::env::var("USERPROFILE")
-                .unwrap_or_else(|_| "C:\\Users\\Default".to_string());
+            let home =
+                std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users\\Default".to_string());
             format!("{}\\AppData\\Roaming\\Microsoft\\Windows\\SendTo", home)
         });
 
-    let expanded = shellexpand::full(&path)
-        .unwrap_or_else(|_| std::borrow::Cow::Owned(path.clone()));
+    let expanded =
+        shellexpand::full(&path).unwrap_or_else(|_| std::borrow::Cow::Owned(path.clone()));
     Ok(PathBuf::from(expanded.as_ref()))
 }
 
@@ -231,16 +230,18 @@ fn uninstall_sendto() -> Result<()> {
 
 fn uninstall_copy_handler_placeholder() -> Result<()> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let _ = hkcu.delete_subkey_all(r"Software\Classes\Directory\shellex\CopyHookHandlers\FerroCopy");
-    let _ = hkcu.delete_subkey_all(r"Software\Classes\Directory\shellex\DragDropHandlers\FerroCopy");
+    let _ =
+        hkcu.delete_subkey_all(r"Software\Classes\Directory\shellex\CopyHookHandlers\FerroCopy");
+    let _ =
+        hkcu.delete_subkey_all(r"Software\Classes\Directory\shellex\DragDropHandlers\FerroCopy");
     Ok(())
 }
 
 /* ── Shell notification ─────────────────────────────────────────────── */
 
 fn notify_shell_change() -> Result<()> {
-    use windows::Win32::UI::WindowsAndMessaging::*;
     use windows::Win32::Foundation::*;
+    use windows::Win32::UI::WindowsAndMessaging::*;
 
     unsafe {
         // HWND_BROADCAST = HWND(-1 as isize as *mut _)
@@ -258,7 +259,8 @@ fn notify_shell_change() -> Result<()> {
 /* ── Shell action handlers ──────────────────────────────────────────── */
 
 pub fn handle_shell_copy(paths: Vec<String>) -> Result<()> {
-    let valid: Vec<String> = paths.into_iter()
+    let valid: Vec<String> = paths
+        .into_iter()
         .filter(|p| std::path::Path::new(p).exists())
         .collect();
     if valid.is_empty() {
@@ -269,13 +271,14 @@ pub fn handle_shell_copy(paths: Vec<String>) -> Result<()> {
 }
 
 pub fn handle_shell_move(paths: Vec<String>) -> Result<()> {
-    let valid: Vec<String> = paths.into_iter()
+    let valid: Vec<String> = paths
+        .into_iter()
         .filter(|p| std::path::Path::new(p).exists())
         .collect();
     if valid.is_empty() {
         anyhow::bail!("No valid source files");
     }
-        crate::gui::run_gui_with_sources_move(valid);
+    crate::gui::run_gui_with_sources_move(valid);
     Ok(())
 }
 
@@ -284,6 +287,6 @@ pub fn handle_shell_paste(target_dir: String) -> Result<()> {
     if !path.is_dir() {
         anyhow::bail!("Invalid paste target: not a directory");
     }
-        crate::gui::run_gui_with_destination(target_dir);
+    crate::gui::run_gui_with_destination(target_dir);
     Ok(())
 }

@@ -10,8 +10,8 @@ use crate::engine;
 use eframe::egui;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc as std_mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 // ── Public entry point ───────────────────────────────────────────────
@@ -60,7 +60,9 @@ pub fn run_gui_with_sources_move(sources: Vec<String>) {
     let _ = eframe::run_native(
         "FerroCopy",
         options,
-        Box::new(|_cc| Ok(Box::new(FerroCopyApp::with_sources_move(sources)) as Box<dyn eframe::App>)),
+        Box::new(|_cc| {
+            Ok(Box::new(FerroCopyApp::with_sources_move(sources)) as Box<dyn eframe::App>)
+        }),
     );
 }
 
@@ -98,7 +100,9 @@ struct FileEntry {
     size: u64,
     progress: f32,
     status: String,
+    #[allow(dead_code)]
     selected: bool,
+    #[allow(dead_code)]
     error: String,
 }
 
@@ -132,6 +136,7 @@ static NEXT_TOAST_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 
 #[derive(Debug, Clone, PartialEq)]
 enum ToastType {
+    #[allow(dead_code)]
     Info,
     Success,
     Error,
@@ -170,13 +175,13 @@ struct GuiState {
     // ZED-inspired: status bar items
     elapsed_secs: f64,
     eta_secs: f64,
-        // Shell integration: pre-populated sources from context menu
-        shell_sources: Vec<String>,
-        // Shell integration: move mode (delete after copy)
-        move_mode: bool,
-        // Shell integration: flag to process pending sources
-        pending_add: bool,
-    }
+    // Shell integration: pre-populated sources from context menu
+    shell_sources: Vec<String>,
+    // Shell integration: move mode (delete after copy)
+    move_mode: bool,
+    // Shell integration: flag to process pending sources
+    pending_add: bool,
+}
 
 impl Default for GuiState {
     fn default() -> Self {
@@ -198,14 +203,14 @@ impl Default for GuiState {
             toasts: Vec::new(),
             elapsed_secs: 0.0,
             eta_secs: 0.0,
-                        shell_sources: Vec::new(),
-                        move_mode: false,
-                        pending_add: false,
-                    }
-                }
-            }
+            shell_sources: Vec::new(),
+            move_mode: false,
+            pending_add: false,
+        }
+    }
+}
 
-            // ── The egui app ─────────────────────────────────────────────────────
+// ── The egui app ─────────────────────────────────────────────────────
 
 pub struct FerroCopyApp {
     state: Arc<Mutex<GuiState>>,
@@ -254,7 +259,7 @@ impl FerroCopyApp {
 
     /// Create app with pre-populated source files (shell context menu)
     pub fn with_sources(sources: Vec<String>) -> Self {
-            let app = Self::new();
+        let app = Self::new();
         {
             let mut state = app.state.lock().unwrap();
             state.shell_sources = sources;
@@ -265,7 +270,7 @@ impl FerroCopyApp {
 
     /// Create app in move mode (delete after copy) with sources
     pub fn with_sources_move(sources: Vec<String>) -> Self {
-            let app = Self::new();
+        let app = Self::new();
         {
             let mut state = app.state.lock().unwrap();
             state.shell_sources = sources;
@@ -277,7 +282,7 @@ impl FerroCopyApp {
 
     /// Create app with a pre-set destination (shell paste)
     pub fn with_destination(dest: String) -> Self {
-            let app = Self::new();
+        let app = Self::new();
         {
             let mut state = app.state.lock().unwrap();
             state.destination = dest;
@@ -375,53 +380,60 @@ impl eframe::App for FerroCopyApp {
             });
             ui.separator();
 
-                        // ── Shell integration: process pending sources from context menu ──
-                        if state.pending_add && !state.shell_sources.is_empty() {
-                            let sources = state.shell_sources.clone();
-                            state.shell_sources.clear();
-                            state.pending_add = false;
-                            if sources.len() == 1 {
-                                state.source = sources[0].clone();
-                            } else {
-                                if let Some(parent) = std::path::Path::new(&sources[0]).parent() {
-                                    state.source = parent.display().to_string();
-                                } else {
-                                    state.source = sources[0].clone();
-                                }
-                            }
-                            for path in &sources {
-                                if !state.files.iter().any(|f| f.name == *path) {
-                                    let path_obj = std::path::Path::new(path);
-                                    let size = crate::engine::get_file_size(path_obj);
-                                    state.files.push(FileEntry {
-                                        name: path.clone(),
-                                        size,
-                                        progress: 0.0,
-                                        status: "Pending".to_string(),
-                                        selected: true,
-                                        error: String::new(),
-                                    });
-                                }
-                            }
-                            state.log.push(format!("📥 Shell: {} file(s) loaded", sources.len()));
-                            if state.move_mode {
-                                state.log.push("🔁 Move mode: files will be deleted after copy".to_string());
-                            }
-                        }
+            // ── Shell integration: process pending sources from context menu ──
+            if state.pending_add && !state.shell_sources.is_empty() {
+                let sources = state.shell_sources.clone();
+                state.shell_sources.clear();
+                state.pending_add = false;
+                if sources.len() == 1 {
+                    state.source = sources[0].clone();
+                } else {
+                    if let Some(parent) = std::path::Path::new(&sources[0]).parent() {
+                        state.source = parent.display().to_string();
+                    } else {
+                        state.source = sources[0].clone();
+                    }
+                }
+                for path in &sources {
+                    if !state.files.iter().any(|f| f.name == *path) {
+                        let path_obj = std::path::Path::new(path);
+                        let size = crate::engine::get_file_size(path_obj);
+                        state.files.push(FileEntry {
+                            name: path.clone(),
+                            size,
+                            progress: 0.0,
+                            status: "Pending".to_string(),
+                            selected: true,
+                            error: String::new(),
+                        });
+                    }
+                }
+                state
+                    .log
+                    .push(format!("📥 Shell: {} file(s) loaded", sources.len()));
+                if state.move_mode {
+                    state
+                        .log
+                        .push("🔁 Move mode: files will be deleted after copy".to_string());
+                }
+            }
 
-                        // ── Shell integration: move mode indicator ──
-                        if state.move_mode {
-                            ui.horizontal(|ui| {
-                                ui.colored_label(egui::Color32::GOLD, "🔁 Move Mode");
-                                ui.label("(Source files will be deleted after copy)");
-                            });
-                        }
+            // ── Shell integration: move mode indicator ──
+            if state.move_mode {
+                ui.horizontal(|ui| {
+                    ui.colored_label(egui::Color32::GOLD, "🔁 Move Mode");
+                    ui.label("(Source files will be deleted after copy)");
+                });
+            }
 
-                        // ── Source ──
+            // ── Source ──
             ui.horizontal(|ui| {
                 ui.label("Source:");
                 let mut src = state.source.clone();
-                if ui.add(egui::TextEdit::singleline(&mut src).desired_width(400.0)).changed() {
+                if ui
+                    .add(egui::TextEdit::singleline(&mut src).desired_width(400.0))
+                    .changed()
+                {
                     state.source = src;
                 }
                 if ui.button("📁").clicked() {
@@ -438,7 +450,10 @@ impl eframe::App for FerroCopyApp {
             ui.horizontal(|ui| {
                 ui.label("Dest:");
                 let mut dst = state.destination.clone();
-                if ui.add(egui::TextEdit::singleline(&mut dst).desired_width(400.0)).changed() {
+                if ui
+                    .add(egui::TextEdit::singleline(&mut dst).desired_width(400.0))
+                    .changed()
+                {
                     state.destination = dst;
                 }
                 if ui.button("📁").clicked() {
@@ -489,9 +504,15 @@ impl eframe::App for FerroCopyApp {
             let mut cancel_clicked: bool = false;
             let mut clear_clicked: bool = false;
             ui.horizontal(|ui| {
-                start_clicked = ui.add_enabled(can_start, egui::Button::new("▶ Start")).clicked();
-                pause_clicked = ui.add_enabled(is_copying, egui::Button::new("⏸ Pause")).clicked();
-                resume_clicked = ui.add_enabled(is_paused, egui::Button::new("▶ Resume")).clicked();
+                start_clicked = ui
+                    .add_enabled(can_start, egui::Button::new("▶ Start"))
+                    .clicked();
+                pause_clicked = ui
+                    .add_enabled(is_copying, egui::Button::new("⏸ Pause"))
+                    .clicked();
+                resume_clicked = ui
+                    .add_enabled(is_paused, egui::Button::new("▶ Resume"))
+                    .clicked();
                 cancel_clicked = ui
                     .add_enabled(is_copying || is_paused, egui::Button::new("⏹ Cancel"))
                     .clicked();
@@ -500,18 +521,19 @@ impl eframe::App for FerroCopyApp {
             });
 
             // Snapshot values to use after dropping the lock
-            let start_args: Option<(PathBuf, PathBuf, bool, bool, HashAlgorithm, usize)> = if start_clicked {
-                Some((
-                    PathBuf::from(&state.source),
-                    PathBuf::from(&state.destination),
-                    state.recursive,
-                    state.verify,
-                    state.hash_algorithm.clone(),
-                    state.threads,
-                ))
-            } else {
-                None
-            };
+            let start_args: Option<(PathBuf, PathBuf, bool, bool, HashAlgorithm, usize)> =
+                if start_clicked {
+                    Some((
+                        PathBuf::from(&state.source),
+                        PathBuf::from(&state.destination),
+                        state.recursive,
+                        state.verify,
+                        state.hash_algorithm.clone(),
+                        state.threads,
+                    ))
+                } else {
+                    None
+                };
 
             if pause_clicked {
                 self.pause.store(true, Ordering::SeqCst);
@@ -563,7 +585,12 @@ impl eframe::App for FerroCopyApp {
 
             if let Some((src, dst, recursive, verify, hash_algo, threads)) = start_args {
                 let _ = self.cmd_tx.send(EngineCommand::Start {
-                    src, dst, recursive, verify, hash_algo, threads,
+                    src,
+                    dst,
+                    recursive,
+                    verify,
+                    hash_algo,
+                    threads,
                 });
             }
 
@@ -578,10 +605,7 @@ impl eframe::App for FerroCopyApp {
                         for entry in &state.files {
                             ui.horizontal(|ui| {
                                 ui.label(&entry.name);
-                                ui.add(
-                                    egui::ProgressBar::new(entry.progress)
-                                        .desired_width(120.0),
-                                );
+                                ui.add(egui::ProgressBar::new(entry.progress).desired_width(120.0));
                                 ui.label(&entry.status);
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
@@ -598,7 +622,10 @@ impl eframe::App for FerroCopyApp {
             }
 
             // ── Total progress ──
-            if matches!(state.status, AppStatus::Copying | AppStatus::Paused | AppStatus::Done) {
+            if matches!(
+                state.status,
+                AppStatus::Copying | AppStatus::Paused | AppStatus::Done
+            ) {
                 ui.separator();
                 let total = self.bytes_total.load(Ordering::Relaxed);
                 let done = self.bytes_done.load(Ordering::Relaxed);
@@ -651,12 +678,17 @@ impl eframe::App for FerroCopyApp {
         // cf. ZED status_bar.rs — left/right item groups layout
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                // Left group: status + current file
-                let status = self.state.lock().unwrap().status.clone();
-                let file = self.state.lock().unwrap().current_file.clone();
+                let state_lock = self.state.lock().unwrap();
+                let status = state_lock.status.clone();
+                let file = state_lock.current_file.clone();
+                let elapsed = state_lock.elapsed_secs;
+                let eta = state_lock.eta_secs;
+                let speed = state_lock.speed;
+                drop(state_lock);
                 let done = self.bytes_done.load(Ordering::Relaxed);
                 let total = self.bytes_total.load(Ordering::Relaxed);
 
+                // Left group: status + current file
                 let icon = match &status {
                     AppStatus::Idle => "⚡",
                     AppStatus::Scanning => "🔍",
@@ -671,18 +703,18 @@ impl eframe::App for FerroCopyApp {
                     AppStatus::Scanning => "Scanning...".into(),
                     AppStatus::Copying => format!("📄 {}", &file),
                     AppStatus::Paused => "Paused".into(),
-                    AppStatus::Done => format!("{} copied", humansize::format_size(done, humansize::BINARY)),
+                    AppStatus::Done => {
+                        format!("{} copied", humansize::format_size(done, humansize::BINARY))
+                    }
                     AppStatus::Error => "Error".into(),
                 };
                 ui.label(&status_str);
 
                 // Right group (pushed to the right)
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let elapsed = self.state.lock().unwrap().elapsed_secs;
                     if elapsed > 0.0 {
                         ui.label(format!("⏱ {:.0}s", elapsed));
                     }
-                    let eta = self.state.lock().unwrap().eta_secs;
                     if eta > 0.0 && eta.is_finite() {
                         ui.label(format!("⏳ {:.0}s", eta));
                     }
@@ -690,7 +722,6 @@ impl eframe::App for FerroCopyApp {
                         let pct = done as f64 / total as f64 * 100.0;
                         ui.label(format!("📊 {:.0}%", pct));
                     }
-                    let speed = self.state.lock().unwrap().speed;
                     if speed > 0.0 {
                         ui.label(format!(
                             "🚀 {}/s",
@@ -908,48 +939,64 @@ fn engine_worker(
                     overwrite: OverwriteMode::Always,
                 });
 
-                // Bridge the unbounded channel used by the engine to a
-                // bounded std::mpsc that the GUI polls.
-                let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel::<FileProgress>();
+                // Single tokio runtime for both bridge and engine
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+
+                let (engine_tx, engine_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<FileProgress>();
                 let progress_for_bridge = progress_tx.clone();
-                let bridge = std::thread::spawn(move || {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .unwrap();
-                    rt.block_on(async {
-                        while let Some(p) = engine_rx.recv().await {
-                            let _ = progress_for_bridge.send(ProgressUpdate {
-                                file: p.file.display().to_string(),
-                                bytes_copied: p.bytes_copied,
-                                total_bytes: p.total_bytes,
-                                speed: p.speed_bytes_per_sec,
-                                is_done: false,
-                                error: String::new(),
-                                log: vec![],
-                            });
-                        }
-                    });
-                });
 
                 let cancel = Arc::new(AtomicBool::new(false));
                 let pause = Arc::new(AtomicBool::new(false));
                 let bytes_total = Arc::new(AtomicU64::new(0));
                 let bytes_done = Arc::new(AtomicU64::new(0));
 
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
-
                 let result = rt.block_on(async {
-                    engine::run_copy_engine(files, config, engine_tx, cancel, Some(pause), bytes_total, bytes_done).await
+                    // Spawn bridge as a local task within the same runtime
+                    let bridge_handle = tokio::spawn({
+                        let mut rx = engine_rx;
+                        let tx = progress_for_bridge;
+                        async move {
+                            while let Some(p) = rx.recv().await {
+                                let _ = tx.send(ProgressUpdate {
+                                    file: p.file.display().to_string(),
+                                    bytes_copied: p.bytes_copied,
+                                    total_bytes: p.total_bytes,
+                                    speed: p.speed_bytes_per_sec,
+                                    is_done: false,
+                                    error: String::new(),
+                                    log: vec![],
+                                });
+                            }
+                        }
+                    });
+
+                    // Engine awaits semaphore; use the bridge handle's runtime
+                    let engine_result = engine::run_copy_engine(
+                        files,
+                        config,
+                        engine_tx,
+                        cancel,
+                        Some(pause),
+                        bytes_total,
+                        bytes_done,
+                    )
+                    .await;
+
+                    let _ = bridge_handle.await;
+
+                    engine_result
                 });
 
-                drop(bridge);
-
                 let is_done = true;
-                let error = result.as_ref().err().map(|e| format!("{:#}", e)).unwrap_or_default();
+                let error = result
+                    .as_ref()
+                    .err()
+                    .map(|e| format!("{:#}", e))
+                    .unwrap_or_default();
                 let log = match &result {
                     Ok(_) => vec!["✓ Copy complete!".to_string()],
                     Err(e) => vec![format!("✗ Error: {}", e)],

@@ -20,7 +20,6 @@ pub enum HashAlgorithm {
 
 #[derive(Debug, Clone)]
 pub enum OverwriteMode {
-    Prompt,
     Always,
     Skip,
     IfDifferent,

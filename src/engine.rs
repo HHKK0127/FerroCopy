@@ -28,6 +28,7 @@ pub fn get_file_size(path: &Path) -> u64 {
 
 /// Lore-inspired error severity for result aggregation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[allow(dead_code)]
 pub enum CopySeverity {
     None = 0,
     Skipped = 1,
@@ -38,6 +39,7 @@ pub enum CopySeverity {
 
 /// Lore-inspired copy outcome (cf. Lore's CopyOutcome + LoreErrorCode)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CopyOutcome {
     pub src: PathBuf,
     pub dst: PathBuf,
@@ -47,11 +49,25 @@ pub struct CopyOutcome {
 }
 
 impl CopyOutcome {
+    #[allow(dead_code)]
     pub fn success(src: PathBuf, dst: PathBuf, bytes: u64) -> Self {
-        Self { src, dst, severity: CopySeverity::None, message: String::new(), bytes_copied: bytes }
+        Self {
+            src,
+            dst,
+            severity: CopySeverity::None,
+            message: String::new(),
+            bytes_copied: bytes,
+        }
     }
+    #[allow(dead_code)]
     pub fn error(src: PathBuf, dst: PathBuf, msg: String) -> Self {
-        Self { src, dst, severity: CopySeverity::Error, message: msg, bytes_copied: 0 }
+        Self {
+            src,
+            dst,
+            severity: CopySeverity::Error,
+            message: msg,
+            bytes_copied: 0,
+        }
     }
 }
 
@@ -64,7 +80,11 @@ pub fn collect_files(src: &Path, dest: &Path, recursive: bool) -> Result<Vec<(Pa
     }
 
     if src.is_file() {
-        let dest_path = if dest.is_dir() || dest.to_string_lossy().ends_with(std::path::MAIN_SEPARATOR_STR) {
+        let dest_path = if dest.is_dir()
+            || dest
+                .to_string_lossy()
+                .ends_with(std::path::MAIN_SEPARATOR_STR)
+        {
             dest.join(src.file_name().unwrap())
         } else {
             dest.to_path_buf()
@@ -123,7 +143,7 @@ pub async fn copy_file(
             OverwriteMode::IfDifferent => {
                 // We'll verify after copy if needed; for now, proceed
             }
-            OverwriteMode::Always | OverwriteMode::Prompt => {}
+            OverwriteMode::Always => {}
         }
     }
 
@@ -174,7 +194,11 @@ pub async fn copy_file(
         bytes_done.fetch_add(n as u64, Ordering::SeqCst);
 
         let elapsed = start.elapsed().as_secs_f64();
-        let speed = if elapsed > 0.0 { copied as f64 / elapsed } else { 0.0 };
+        let speed = if elapsed > 0.0 {
+            copied as f64 / elapsed
+        } else {
+            0.0
+        };
 
         let _ = progress_sender.send(FileProgress {
             file: src.to_path_buf(),
@@ -186,61 +210,78 @@ pub async fn copy_file(
 
     // Preserve timestamps
     if let Ok(meta) = std::fs::metadata(src) {
-        if let (Ok(atime), Ok(mtime)) = (
-            meta.accessed(),
-            meta.modified(),
-        ) {
+        if let (Ok(atime), Ok(mtime)) = (meta.accessed(), meta.modified()) {
             let _ = filetime::set_file_times(dst, atime.into(), mtime.into());
         }
     }
 
     // Verification
     if config.verify {
-        let ok = hash::verify_copy(src, dst, matches!(config.hash_algorithm, HashAlgorithm::Blake3)).await?;
+        let ok = hash::verify_copy(
+            src,
+            dst,
+            matches!(config.hash_algorithm, HashAlgorithm::Blake3),
+        )
+        .await?;
         if !ok {
             anyhow::bail!("Hash mismatch for: {}", src.display());
         }
     }
 
-    tracing::info!("Copied: {} → {} ({} bytes)", src.display(), dst.display(), copied);
+    tracing::info!(
+        "Copied: {} → {} ({} bytes)",
+        src.display(),
+        dst.display(),
+        copied
+    );
     Ok(())
 }
 
-    /// Copy a file and optionally delete the source after success (move mode)
-    /// Lore-inspired: 3-try delete with backoff
-    pub async fn copy_file_with_move(
-        src: &Path,
-        dst: &Path,
-        config: &CopyConfig,
-        progress_sender: tokio::sync::mpsc::UnboundedSender<FileProgress>,
-        cancel: Arc<AtomicBool>,
-        pause: Option<Arc<AtomicBool>>,
-        bytes_total: Arc<AtomicU64>,
-        bytes_done: Arc<AtomicU64>,
-    ) -> Result<()> {
-        copy_file(src, dst, config, progress_sender, cancel, pause, bytes_total, bytes_done).await?;
+/// Copy a file and optionally delete the source after success (move mode)
+/// Lore-inspired: 3-try delete with backoff
+pub async fn copy_file_with_move(
+    src: &Path,
+    dst: &Path,
+    config: &CopyConfig,
+    progress_sender: tokio::sync::mpsc::UnboundedSender<FileProgress>,
+    cancel: Arc<AtomicBool>,
+    pause: Option<Arc<AtomicBool>>,
+    bytes_total: Arc<AtomicU64>,
+    bytes_done: Arc<AtomicU64>,
+) -> Result<()> {
+    copy_file(
+        src,
+        dst,
+        config,
+        progress_sender,
+        cancel,
+        pause,
+        bytes_total,
+        bytes_done,
+    )
+    .await?;
 
-        let mut last_err = None;
-        for attempt in 1..=3 {
-            match tokio::fs::remove_file(src).await {
-                Ok(_) => {
-                    tracing::info!("Moved (deleted source): {}", src.display());
-                    return Ok(());
-                }
-                Err(e) => {
-                    last_err = Some(e);
-                    if attempt < 3 {
-                        tokio::time::sleep(Duration::from_millis(100 * attempt)).await;
-                    }
+    let mut last_err = None;
+    for attempt in 1..=3 {
+        match tokio::fs::remove_file(src).await {
+            Ok(_) => {
+                tracing::info!("Moved (deleted source): {}", src.display());
+                return Ok(());
+            }
+            Err(e) => {
+                last_err = Some(e);
+                if attempt < 3 {
+                    tokio::time::sleep(Duration::from_millis(100 * attempt)).await;
                 }
             }
         }
-        anyhow::bail!(
-            "Failed to delete source after copy ({}): {:#}",
-            src.display(),
-            last_err.unwrap()
-        )
     }
+    anyhow::bail!(
+        "Failed to delete source after copy ({}): {:#}",
+        src.display(),
+        last_err.unwrap()
+    )
+}
 
 /// Run the copy engine with multiple parallel workers
 pub async fn run_copy_engine(
@@ -252,7 +293,17 @@ pub async fn run_copy_engine(
     bytes_total: Arc<AtomicU64>,
     bytes_done: Arc<AtomicU64>,
 ) -> Result<()> {
-    run_copy_engine_inner(files, config, progress_sender, cancel, pause, bytes_total, bytes_done, false).await
+    run_copy_engine_inner(
+        files,
+        config,
+        progress_sender,
+        cancel,
+        pause,
+        bytes_total,
+        bytes_done,
+        false,
+    )
+    .await
 }
 
 /// Run copy engine in move mode (deletes source after copy)
@@ -265,7 +316,17 @@ pub async fn run_move_engine(
     bytes_total: Arc<AtomicU64>,
     bytes_done: Arc<AtomicU64>,
 ) -> Result<()> {
-    run_copy_engine_inner(files, config, progress_sender, cancel, pause, bytes_total, bytes_done, true).await
+    run_copy_engine_inner(
+        files,
+        config,
+        progress_sender,
+        cancel,
+        pause,
+        bytes_total,
+        bytes_done,
+        true,
+    )
+    .await
 }
 
 /// ★ Lore-inspired: internal parallel engine with move mode support
