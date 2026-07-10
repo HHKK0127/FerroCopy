@@ -38,7 +38,44 @@ pub async fn xxh3_hash(path: &Path) -> Result<String> {
     Ok(hasher.digest128().to_string())
 }
 
-/// Verify a copied file by comparing hashes
+/// Stream-hash a file by feeding bytes into the hasher.
+/// Works with both BLAKE3 and XXH3.
+pub enum StreamHasher {
+    Blake3(blake3::Hasher),
+    Xxh3(xxhash_rust::xxh3::Xxh3),
+}
+
+impl StreamHasher {
+    pub fn new(use_blake3: bool) -> Self {
+        if use_blake3 {
+            Self::Blake3(blake3::Hasher::new())
+        } else {
+            Self::Xxh3(xxhash_rust::xxh3::Xxh3::new())
+        }
+    }
+
+    pub fn update(&mut self, bytes: &[u8]) {
+        match self {
+            Self::Blake3(h) => {
+                blake3::Hasher::update(h, bytes);
+            }
+            Self::Xxh3(h) => {
+                use xxhash_rust::xxh3::Xxh3;
+                Xxh3::update(h, bytes);
+            }
+        }
+    }
+
+    pub fn finalize_hex(&self) -> String {
+        match self {
+            Self::Blake3(h) => h.finalize().to_hex().to_string(),
+            Self::Xxh3(h) => h.digest128().to_string(),
+        }
+    }
+}
+
+/// Verify a copied file by comparing hashes.
+/// Still reads both files — kept for backward compat.
 pub async fn verify_copy(src: &Path, dst: &Path, use_blake3: bool) -> Result<bool> {
     tracing::info!("Verifying: {} → {}", src.display(), dst.display());
 

@@ -77,18 +77,12 @@ impl Particle {
             self.y = 0.0;
         }
     }
-
-    fn paint(&self, painter: &egui::Painter, rect: &egui::Rect) {
-        let px = rect.left() + self.x * rect.width() / 800.0;
-        let py = rect.top() + self.y * rect.height() / 600.0;
-        let pos = egui::pos2(px, py);
-        let color = egui::Color32::from_white_alpha((self.alpha * 255.0) as u8);
-        painter.circle_filled(pos, self.radius, color);
     }
-}
 
-pub struct ParticleSystem {
-    particles: Vec<Particle>,
+    fn paint(_self: &Particle, _painter: &egui::Painter, _rect: &egui::Rect) {}
+
+    pub struct ParticleSystem {
+        particles: Vec<Particle>,
     initialized: bool,
 }
 
@@ -119,10 +113,16 @@ impl ParticleSystem {
     }
 
     pub fn paint(&self, painter: &egui::Painter, rect: &egui::Rect) {
-        for p in &self.particles {
-            p.paint(painter, rect);
+            let mut shapes = Vec::with_capacity(self.particles.len());
+            for p in &self.particles {
+                let px = rect.left() + p.x * rect.width() / 800.0;
+                let py = rect.top() + p.y * rect.height() / 600.0;
+                let pos = egui::pos2(px, py);
+                let color = egui::Color32::from_white_alpha((p.alpha * 255.0) as u8);
+                shapes.push(egui::Shape::circle_filled(pos, p.radius, color));
+            }
+            painter.extend(shapes);
         }
-    }
 }
 
 // ── Dot Progress Bar ─────────────────────────────────────────────────
@@ -147,7 +147,9 @@ pub fn dot_progress_bar(ui: &mut egui::Ui, ratio: f32, width: f32, paused: bool,
         ((time * 4.0).sin() * 0.3 + 0.7) as f32
     };
 
-    for i in 0..dot_count {
+    let mut shapes = Vec::with_capacity(dot_count);
+
+        for i in 0..dot_count {
         let x = rect.left() + (i as f32 + 0.5) * dot_spacing;
         let y = rect.center().y;
         let pos = egui::pos2(x, y);
@@ -173,8 +175,10 @@ pub fn dot_progress_bar(ui: &mut egui::Ui, ratio: f32, width: f32, paused: bool,
             80.0
         };
         let c = color.linear_multiply(alpha / 255.0);
-        painter.circle_filled(pos, radius, c);
+        shapes.push(egui::Shape::circle_filled(pos, radius, c));
     }
+
+    painter.extend(shapes);
 }
 
 // ── Dot Separator ────────────────────────────────────────────────────
@@ -190,6 +194,8 @@ pub fn dot_separator(ui: &mut egui::Ui, time: f64) {
     let dot_count = 60;
     let spacing = rect.width() / dot_count as f32;
 
+    let mut shapes = Vec::with_capacity(dot_count);
+
     for i in 0..dot_count {
         let x = rect.left() + (i as f32 + 0.5) * spacing;
         let y = rect.center().y;
@@ -199,8 +205,10 @@ pub fn dot_separator(ui: &mut egui::Ui, time: f64) {
         let alpha: u8 = (40.0 + phase * 80.0) as u8;
         let radius: f32 = 1.0 + phase * 0.8;
 
-        painter.circle_filled(pos, radius, egui::Color32::from_white_alpha(alpha));
+            shapes.push(egui::Shape::circle_filled(pos, radius, egui::Color32::from_white_alpha(alpha)));
     }
+
+    painter.extend(shapes);
 }
 
 // ── File Icon Dots ───────────────────────────────────────────────────
@@ -217,14 +225,16 @@ fn paint_dots(
     pulse: f32,
     color: egui::Color32,
 ) {
+    let mut shapes = Vec::with_capacity(pts.len());
     for &(dx, dy) in pts {
         let r = 2.0 * pulse;
-        painter.circle_filled(
+        shapes.push(egui::Shape::circle_filled(
             egui::pos2(x + dx * pulse, y + dy * pulse),
             r,
             color.linear_multiply(0.8),
-        );
+        ));
     }
+    painter.extend(shapes);
 }
 
 /// Determine the dot pattern for a file based on its extension.
@@ -338,6 +348,7 @@ pub fn dot_checkbox(ui: &mut egui::Ui, checked: &mut bool, time: f64) -> bool {
     if *checked {
         let count = 8;
         let pulse: f32 = ((time * 5.0).sin() * 0.3 + 0.7) as f32;
+        let mut shapes = Vec::with_capacity(count + 1 + 6);
         for i in 0..count {
             let angle = i as f64 * std::f64::consts::PI * 2.0 / count as f64;
             let r: f32 = (5.0 + pulse * 3.0) * (0.8 + (i as f32 / count as f32) * 0.2);
@@ -345,26 +356,29 @@ pub fn dot_checkbox(ui: &mut egui::Ui, checked: &mut bool, time: f64) -> bool {
             let y = cy + (angle.sin() as f32) * r;
             let alpha: u8 = (120.0 + pulse * 80.0) as u8;
             let color = egui::Color32::from_rgba_premultiplied(100, 180, 255, alpha);
-            painter.circle_filled(egui::pos2(x, y), 1.8, color);
+            shapes.push(egui::Shape::circle_filled(egui::pos2(x, y), 1.8, color));
         }
-        painter.circle_filled(egui::pos2(cx, cy), 2.5, STAR_BLUE);
+        shapes.push(egui::Shape::circle_filled(egui::pos2(cx, cy), 2.5, STAR_BLUE));
         for i in 0..6 {
             let angle = time * 3.0 + i as f64 * std::f64::consts::PI / 3.0;
             let r = 9.0_f32;
             let x = cx + (angle.cos() as f32) * r;
             let y = cy + (angle.sin() as f32) * r;
-            painter.circle_filled(egui::pos2(x, y), 1.0, STAR_BLUE.linear_multiply(0.4));
+            shapes.push(egui::Shape::circle_filled(egui::pos2(x, y), 1.0, STAR_BLUE.linear_multiply(0.4)));
         }
+        painter.extend(shapes);
     } else {
         let gap = 4.0_f32;
         let dots = [(-gap, -gap), (gap, -gap), (-gap, gap), (gap, gap)];
+        let mut shapes = Vec::with_capacity(4);
         for &(dx, dy) in &dots {
-            painter.circle_filled(
+            shapes.push(egui::Shape::circle_filled(
                 egui::pos2(cx + dx, cy + dy),
                 1.5,
                 egui::Color32::from_rgb(80, 100, 130),
-            );
+            ));
         }
+        painter.extend(shapes);
     }
 
     false
@@ -391,24 +405,33 @@ pub fn dot_button(ui: &mut egui::Ui, label: &str, enabled: bool, time: f64) -> b
     let spacing_x = rect.width() / cols as f32;
     let spacing_y = rect.height() / rows as f32;
 
-    for row in 0..rows {
-        for col in 0..cols {
-            let x = rect.left() + (col as f32 + 0.5) * spacing_x;
-            let y = rect.top() + (row as f32 + 0.5) * spacing_y;
-            let pos = egui::pos2(x, y);
-
-            let (radius, alpha): (f32, u8) = if hovered {
+        let mut shapes = Vec::with_capacity((cols * rows) as usize);
+        if hovered {
+            for row in 0..rows {
+                for col in 0..cols {
+                    let x = rect.left() + (col as f32 + 0.5) * spacing_x;
+                    let y = rect.top() + (row as f32 + 0.5) * spacing_y;
+                    let pos = egui::pos2(x, y);
                 let pulse: f32 =
                     ((time * 6.0 + (row * cols + col) as f64 * 0.3).sin() * 0.3 + 0.7) as f32;
-                (1.5 + pulse * 0.8, (80.0 + pulse * 120.0) as u8)
-            } else {
-                (1.0, 30u8)
-            };
-
-            let color = egui::Color32::from_rgba_premultiplied(100, 180, 255, alpha);
-            painter.circle_filled(pos, radius, color);
+                    let alpha: u8 = (80.0 + pulse * 120.0) as u8;
+                    let radius: f32 = 1.5 + pulse * 0.8;
+                    let color = egui::Color32::from_rgba_premultiplied(100, 180, 255, alpha);
+                    shapes.push(egui::Shape::circle_filled(pos, radius, color));
+                }
+            }
+        } else {
+            for row in 0..rows {
+                for col in 0..cols {
+                    let x = rect.left() + (col as f32 + 0.5) * spacing_x;
+                    let y = rect.top() + (row as f32 + 0.5) * spacing_y;
+                    let pos = egui::pos2(x, y);
+                    let color = egui::Color32::from_rgba_premultiplied(100, 180, 255, 30);
+                    shapes.push(egui::Shape::circle_filled(pos, 1.0, color));
+                }
+            }
         }
-    }
+        painter.extend(shapes);
 
     // Label text on top
     let galley = painter.layout_no_wrap(

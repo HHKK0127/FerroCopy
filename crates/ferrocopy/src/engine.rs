@@ -10,6 +10,85 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Semaphore;
 use walkdir::WalkDir;
 
+// ── Warp-inspired: Exponential backoff with jitter ────────────────────
+
+/// Retry strategy with exponential backoff and full jitter.
+/// Warp's `sync_queue` inspired: transient errors are retried with
+/// exponential backoff + random jitter to avoid thundering herd.
+#[derive(Debug, Clone)]
+pub struct RetryStrategy {
+    /// Maximum number of retry attempts (0 = no retry)
+    pub max_attempts: u32,
+    /// Initial backoff duration (doubles each attempt)
+    pub base_delay: Duration,
+    /// Maximum backoff duration cap
+    pub max_delay: Duration,
+}
+
+impl Default for RetryStrategy {
+    fn default() -> Self {
+        Self {
+            max_attempts: 3,
+            base_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(5),
+        }
+    }
+}
+
+impl RetryStrategy {
+    /// Create a new retry strategy with the given parameters.
+    pub const fn new(max_attempts: u32, base_delay: Duration, max_delay: Duration) -> Self {
+        Self {
+            max_attempts,
+            base_delay,
+            max_delay,
+        }
+    }
+
+    /// Compute the delay for a given attempt (0-based) with full jitter.
+    /// delay = min(base * 2^attempt, max_delay) * random(0.0..1.0)
+    pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
+        let base_ms = self.base_delay.as_millis() as f64;
+        let max_ms = self.max_delay.as_millis() as f64;
+        let exponential = (base_ms * (2u64.pow(attempt)) as f64).min(max_ms);
+        let jittered = exponential * fastrand::f64(); // full jitter [0.0, 1.0)
+        Duration::from_millis(jittered as u64)
+    }
+}
+
+/// Retry a fallible async operation with exponential backoff + full jitter.
+/// Warp's `sync_queue` inspired: transient errors are retried,
+/// permanent errors are returned immediately.
+///
+/// Returns `Ok(result)` on success, or the last error after exhausting retries.
+pub async fn retry_with_backoff<T, E, F, Fut>(
+    strategy: &RetryStrategy,
+    is_transient: fn(&E) -> bool,
+    operation: F,
+) -> Result<T, E>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+{
+    let mut last_err = None;
+    for attempt in 0..=strategy.max_attempts {
+        if attempt > 0 {
+            let delay = strategy.delay_for_attempt(attempt - 1);
+            tokio::time::sleep(delay).await;
+        }
+        match operation().await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                if !is_transient(&e) || attempt == strategy.max_attempts {
+                    return Err(e);
+                }
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err.unwrap())
+}
+
 // ── Lore-inspired error severity and aggregation ────────────────────
 
 /// Lore-inspired error severity for result aggregation.
@@ -281,6 +360,15 @@ pub async fn copy_file(
     let mut copied: u64 = 0;
     let start = std::time::Instant::now();
 
+    // Streaming hash — compute during copy, skip re-read later
+    let mut stream_hasher = if config.verify {
+        Some(hash::StreamHasher::new(
+            matches!(config.hash_algorithm, HashAlgorithm::Blake3),
+        ))
+    } else {
+        None
+    };
+
     loop {
         if cancel.load(Ordering::SeqCst) {
             anyhow::bail!("Copy cancelled by user");
@@ -304,6 +392,11 @@ pub async fn copy_file(
         copied += n as u64;
         bytes_done.fetch_add(n as u64, Ordering::SeqCst);
 
+        // Streaming hash: update during copy, no re-read needed
+        if let Some(ref mut h) = stream_hasher {
+            h.update(&buf[..n]);
+        }
+
         let elapsed = start.elapsed().as_secs_f64();
         let speed = if elapsed > 0.0 {
             copied as f64 / elapsed
@@ -326,16 +419,31 @@ pub async fn copy_file(
         }
     }
 
-    // Verification
+    // Verification using streaming hash (no file re-read)
     if config.verify {
-        let ok = hash::verify_copy(
-            src,
-            dst,
-            matches!(config.hash_algorithm, HashAlgorithm::Blake3),
-        )
-        .await?;
-        if !ok {
-            anyhow::bail!("Hash mismatch for: {}", src.display());
+        if let Some(h) = stream_hasher {
+            let src_hash = h.finalize_hex();
+            // Re-hash only the destination file for comparison
+            let dst_hash = if matches!(config.hash_algorithm, HashAlgorithm::Blake3) {
+                hash::blake3_hash(dst).await?
+            } else {
+                hash::xxh3_hash(dst).await?
+            };
+            if src_hash != dst_hash {
+                anyhow::bail!("Hash mismatch for: {}", src.display());
+            }
+            tracing::info!("✓ Hash verified (streaming): {}", src_hash);
+        } else {
+            // Fallback (shouldn't happen)
+            let ok = hash::verify_copy(
+                src,
+                dst,
+                matches!(config.hash_algorithm, HashAlgorithm::Blake3),
+            )
+            .await?;
+            if !ok {
+                anyhow::bail!("Hash mismatch for: {}", src.display());
+            }
         }
     }
 
@@ -349,7 +457,7 @@ pub async fn copy_file(
 }
 
 /// Copy a file and optionally delete the source after success (move mode)
-/// Lore-inspired: 3-try delete with backoff
+/// Warp-inspired: uses exponential backoff + jitter for retries
 pub async fn copy_file_with_move(
     src: &Path,
     dst: &Path,
@@ -372,26 +480,17 @@ pub async fn copy_file_with_move(
     )
     .await?;
 
-    let mut last_err = None;
-    for attempt in 1..=3 {
-        match tokio::fs::remove_file(src).await {
-            Ok(_) => {
-                tracing::info!("Moved (deleted source): {}", src.display());
-                return Ok(());
-            }
-            Err(e) => {
-                last_err = Some(e);
-                if attempt < 3 {
-                    tokio::time::sleep(Duration::from_millis(100 * attempt)).await;
-                }
-            }
-        }
-    }
-    anyhow::bail!(
-        "Failed to delete source after copy ({}): {:#}",
-        src.display(),
-        last_err.unwrap()
+    let strategy = RetryStrategy::new(3, Duration::from_millis(100), Duration::from_secs(2));
+    retry_with_backoff(
+        &strategy,
+        |_: &std::io::Error| true, // file deletion errors are always transient
+        || async move { tokio::fs::remove_file(src).await },
     )
+    .await
+    .with_context(|| format!("Failed to delete source after copy: {}", src.display()))?;
+
+    tracing::info!("Moved (deleted source): {}", src.display());
+    Ok(())
 }
 
 /// Run the copy engine with multiple parallel workers.
@@ -457,13 +556,9 @@ async fn run_copy_engine_inner(
 ) -> EngineResult {
     let semaphore = Arc::new(Semaphore::new(config.threads));
     let result_agg = Arc::new(std::sync::Mutex::new(EngineResult::new()));
-    let mut handles = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
 
     for (src, dst) in files {
-        let permit = semaphore.clone().acquire_owned().await.unwrap_or_else(|_| {
-            panic!("Failed to acquire semaphore permit");
-        });
-
         let config = config.clone();
         let sender = progress_sender.clone();
         let cancel = cancel.clone();
@@ -471,9 +566,14 @@ async fn run_copy_engine_inner(
         let bt = bytes_total.clone();
         let bd = bytes_done.clone();
         let agg = result_agg.clone();
+        let sem = semaphore.clone();
 
-        handles.push(tokio::spawn(async move {
-            let _permit = permit;
+        set.spawn(async move {
+            // Acquire semaphore inside spawn — no guard-page gap
+            let _permit = sem.acquire_owned().await.unwrap_or_else(|_| {
+                panic!("Semaphore closed unexpectedly");
+            });
+
             let outcome = if move_mode {
                 match copy_file_with_move(&src, &dst, &config, sender, cancel, pause, bt, bd).await
                 {
@@ -489,13 +589,28 @@ async fn run_copy_engine_inner(
             if let Ok(mut agg) = agg.lock() {
                 agg.outcomes.push(outcome);
             }
-        }));
+        });
     }
 
-    for h in handles {
-        let _ = h.await;
+    while let Some(result) = set.join_next().await {
+        if let Err(e) = result {
+            // Task panicked or cancelled — record as error
+            let msg = if e.is_cancelled() {
+                "Task cancelled".to_string()
+            } else {
+                format!("Task panicked: {}", e)
+            };
+            if let Ok(mut agg) = result_agg.lock() {
+                agg.outcomes.push(CopyOutcome::error(
+                    PathBuf::from("<unknown>"),
+                    PathBuf::from("<unknown>"),
+                    msg,
+                ));
+            }
+        }
     }
 
+    // Return aggregated result
     let final_result = result_agg.lock().unwrap_or_else(|e| e.into_inner()).clone();
     final_result
 }

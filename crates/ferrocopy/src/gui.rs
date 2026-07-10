@@ -842,7 +842,7 @@ impl FerroCopyApp {
                 let frame = egui::Frame::none()
                     .fill(egui::Color32::from_black_alpha(220))
                     .rounding(egui::Rounding::same(6.0))
-                    .stroke(egui::Stroke::new(1.0, color));
+                    .stroke(egui::Stroke::new(1.0_f32, color));
                 frame.show(ui, |ui| {
                     ui.set_max_width(280.0);
                     ui.horizontal(|ui| {

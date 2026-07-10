@@ -3,7 +3,9 @@ mod dot;
 mod engine;
 mod gui;
 mod hash;
+mod plugin;
 mod shell;
+mod signal;
 
 use clap::Parser;
 use std::path::PathBuf;
