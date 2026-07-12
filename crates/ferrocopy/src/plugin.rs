@@ -1,192 +1,178 @@
-// ── Bevy-inspired: Plugin architecture ───────────────────────────────
-//
-// Plugin trait + App builder pattern for modular feature composition.
-// Each capability (GUI, CLI, Shell, Verification, SSH) becomes a Plugin
-// that registers its own commands, UI elements, and event handlers.
+//! Plugin — pluggable copy command architecture.
+//!
+//! Inspired by Bevy's Plugin trait and Lapce's command dispatcher.
+//! Allows external code to register custom hooks around copy operations.
 
-use crate::config::FerroConfig;
-use crate::engine::EngineResult;
-use std::sync::Arc;
+use crate::config::CopyConfig;
+use std::path::PathBuf;
 
-/// Unique identifier for each plugin.
-/// Used for dependency ordering and registration.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct PluginId(pub &'static str);
-
-impl PluginId {
-    pub const CORE: Self = PluginId("ferrocopy.core");
-    pub const GUI: Self = PluginId("ferrocopy.gui");
-    pub const CLI: Self = PluginId("ferrocopy.cli");
-    pub const SHELL: Self = PluginId("ferrocopy.shell");
-    pub const VERIFY: Self = PluginId("ferrocopy.verify");
-    pub const SSH: Self = PluginId("ferrocopy.ssh");
-}
-
-/// Plugin dependency: one plugin must be loaded before another.
+/// Context passed to a plugin when a copy command is dispatched.
 #[derive(Debug, Clone)]
-pub struct PluginDependency {
-    pub id: PluginId,
-    pub required: bool,
+pub struct PluginContext {
+    pub source: PathBuf,
+    pub destination: PathBuf,
+    pub config: CopyConfig,
 }
 
-/// Bevy-inspired: every capability is a Plugin with lifecycle hooks.
-pub trait Plugin: Send {
-    /// Unique identifier for this plugin.
-    fn id(&self) -> PluginId;
-
-    /// List of plugins this plugin depends on.
-    fn dependencies(&self) -> Vec<PluginDependency> {
-        Vec::new()
-    }
-
-    /// Called once during app initialization.
-    fn on_register(&self, app: &mut App) -> anyhow::Result<()>;
-
-    /// Called after all plugins are registered.
-    fn on_startup(&self, _app: &App) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    /// Called periodically (or on config change).
-    fn on_update(&self, _app: &App) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    /// Called on graceful shutdown.
-    fn on_shutdown(&self, _app: &App) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
-/// The App registry: holds config and all registered plugins.
-/// Bevy App inspired: single entry point for building FerroCopy.
-pub struct App {
-    pub config: FerroConfig,
-    plugins: Vec<Box<dyn Plugin>>,
-    plugin_ids: std::collections::HashSet<PluginId>,
-}
-
-impl App {
-    pub fn new(config: FerroConfig) -> Self {
-        Self {
-            config,
-            plugins: Vec::new(),
-            plugin_ids: std::collections::HashSet::new(),
-        }
-    }
-
-    /// Register a plugin. Returns error if already registered.
-    pub fn add_plugin<T: Plugin + 'static>(&mut self, plugin: T) -> anyhow::Result<()> {
-        let id = plugin.id();
-        if !self.plugin_ids.insert(id.clone()) {
-            anyhow::bail!("Plugin already registered: {:?}", id);
-        }
-        // Call register lifecycle
-        plugin.on_register(self)?;
-        self.plugins.push(Box::new(plugin));
-        Ok(())
-    }
-
-    /// Call startup on all plugins (after all are registered).
-    pub fn startup(&self) -> anyhow::Result<()> {
-        for plugin in &self.plugins {
-            plugin.on_startup(self)?;
-        }
-        Ok(())
-    }
-
-    /// Call update on all plugins.
-    pub fn update(&self) -> anyhow::Result<()> {
-        for plugin in &self.plugins {
-            plugin.on_update(self)?;
-        }
-        Ok(())
-    }
-
-    /// Call shutdown on all plugins (reverse order).
-    pub fn shutdown(&self) -> anyhow::Result<()> {
-        for plugin in self.plugins.iter().rev() {
-            plugin.on_shutdown(self)?;
-        }
-        Ok(())
-    }
-}
-
-// ── Lapce-inspired: Command dispatcher ───────────────────────────────
-//
-// Centralized, type-safe command dispatch. CopyCommand variants
-// map directly to user actions, removing ad-hoc match chains.
-
-/// All copy-related commands, dispatched via a single channel.
-/// Lapce dispatch.rs inspired: Start/Cancel/Pause as typed variants.
+/// Commands that can be dispatched to plugins.
 #[derive(Debug, Clone)]
 pub enum CopyCommand {
-    /// Start copy with given source(s) and destination.
-    Start {
-        sources: Vec<std::path::PathBuf>,
-        destination: std::path::PathBuf,
+    /// Called before any files are copied.
+    PreCopy(PluginContext),
+    /// Called after a single file is copied.
+    PostFile {
+        src: PathBuf,
+        dst: PathBuf,
+        bytes: u64,
+        success: bool,
     },
-    /// Cancel current copy operation.
-    Cancel,
-    /// Pause current copy operation.
-    Pause,
-    /// Resume paused copy operation.
-    Resume,
-    /// Retry failed items.
-    RetryFailed,
-    /// Move mode (copy + delete source).
-    Move {
-        sources: Vec<std::path::PathBuf>,
-        destination: std::path::PathBuf,
+    /// Called after all files are copied.
+    PostCopy {
+        total_files: u64,
+        total_bytes: u64,
+        errors: u64,
     },
 }
 
-/// Result of executing a CopyCommand.
-#[derive(Debug)]
-pub enum CommandResult {
-    Started,
-    Cancelled,
-    Paused,
-    Resumed,
-    Completed(EngineResult),
-    Error(String),
+/// A plugin that can hook into copy operations.
+pub trait Plugin: Send + Sync {
+    fn name(&self) -> &str;
+
+    /// Called when a command is dispatched. Return Ok to continue,
+    /// Err to abort the operation.
+    fn handle(&self, _cmd: &CopyCommand) -> Result<(), String> {
+        Ok(())
+    }
 }
 
-/// Trait for objects that can execute CopyCommands.
-pub trait CommandHandler: Send {
-    fn execute(&mut self, cmd: CopyCommand) -> CommandResult;
+/// Registry that holds all plugins and dispatches commands.
+pub struct PluginRegistry {
+    plugins: Vec<Box<dyn Plugin>>,
 }
 
-/// Default command dispatcher: routes commands to registered handlers.
-pub struct Dispatcher {
-    handlers: Vec<Box<dyn CommandHandler>>,
-}
-
-impl Dispatcher {
+impl PluginRegistry {
     pub fn new() -> Self {
-        Self {
-            handlers: Vec::new(),
+        Self { plugins: Vec::new() }
+    }
+
+    /// Register a plugin.
+    pub fn register<P: Plugin + 'static>(&mut self, plugin: P) {
+        tracing::info!("Registered plugin: {}", plugin.name());
+        self.plugins.push(Box::new(plugin));
+    }
+
+    /// Dispatch a command to all plugins in registration order.
+    /// Returns the first error encountered, if any.
+    pub fn dispatch(&self, cmd: &CopyCommand) -> Result<(), String> {
+        for plugin in &self.plugins {
+            plugin.handle(cmd)?;
         }
+        Ok(())
     }
 
-    /// Register a command handler (e.g., engine shell, GUI, CLI).
-    pub fn add_handler(&mut self, handler: Box<dyn CommandHandler>) {
-        self.handlers.push(handler);
+    /// Number of registered plugins.
+    pub fn len(&self) -> usize {
+        self.plugins.len()
     }
 
-    /// Dispatch a command to all handlers (first match wins).
-    pub fn dispatch(&mut self, cmd: CopyCommand) -> CommandResult {
-        for handler in &mut self.handlers {
-            let result = handler.execute(cmd.clone());
-            match &result {
-                CommandResult::Started
-                | CommandResult::Cancelled
-                | CommandResult::Paused
-                | CommandResult::Resumed
-                | CommandResult::Completed(_) => return result,
-                CommandResult::Error(_) => continue,
+    pub fn is_empty(&self) -> bool {
+        self.plugins.is_empty()
+    }
+}
+
+impl Default for PluginRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A simple logging plugin for testing.
+pub struct LogPlugin;
+
+impl Plugin for LogPlugin {
+    fn name(&self) -> &str {
+        "log"
+    }
+
+    fn handle(&self, cmd: &CopyCommand) -> Result<(), String> {
+        match cmd {
+            CopyCommand::PreCopy(ctx) => {
+                tracing::info!("PreCopy: {} → {}", ctx.source.display(), ctx.destination.display());
+            }
+            CopyCommand::PostFile { src, success, .. } => {
+                if *success {
+                    tracing::debug!("PostFile: {}", src.display());
+                } else {
+                    tracing::warn!("PostFile FAILED: {}", src.display());
+                }
+            }
+            CopyCommand::PostCopy { total_files, errors, .. } => {
+                tracing::info!("PostCopy: {} files, {} errors", total_files, errors);
             }
         }
-        CommandResult::Error("No handler could process this command".into())
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    struct FailPlugin;
+    impl Plugin for FailPlugin {
+        fn name(&self) -> &str {
+            "fail"
+        }
+        fn handle(&self, _cmd: &CopyCommand) -> Result<(), String> {
+            Err("intentional failure".into())
+        }
+    }
+
+    #[test]
+    fn test_registry_dispatch() {
+        let mut reg = PluginRegistry::new();
+        reg.register(LogPlugin);
+        assert_eq!(reg.len(), 1);
+
+        let ctx = PluginContext {
+            source: Path::new("a").to_path_buf(),
+            destination: Path::new("b").to_path_buf(),
+            config: CopyConfig {
+                source: Path::new("a").to_path_buf(),
+                destination: Path::new("b").to_path_buf(),
+                verify: false,
+                hash_algorithm: crate::config::HashAlgorithm::Blake3,
+                threads: 1,
+                recursive: false,
+                overwrite: crate::config::OverwriteMode::Always,
+            },
+        };
+        let cmd = CopyCommand::PreCopy(ctx);
+        assert!(reg.dispatch(&cmd).is_ok());
+    }
+
+    #[test]
+    fn test_fail_plugin() {
+        let mut reg = PluginRegistry::new();
+        reg.register(FailPlugin);
+        let cmd = CopyCommand::PostCopy {
+            total_files: 0,
+            total_bytes: 0,
+            errors: 0,
+        };
+        assert!(reg.dispatch(&cmd).is_err());
+    }
+
+    #[test]
+    fn test_empty_registry() {
+        let reg = PluginRegistry::new();
+        assert!(reg.is_empty());
+        let cmd = CopyCommand::PostCopy {
+            total_files: 0,
+            total_bytes: 0,
+            errors: 0,
+        };
+        assert!(reg.dispatch(&cmd).is_ok());
     }
 }
