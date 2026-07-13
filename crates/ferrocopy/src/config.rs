@@ -25,6 +25,7 @@ pub enum OverwriteMode {
     Always,
     Skip,
     IfDifferent,
+    Prompt,
 }
 
 impl std::fmt::Display for HashAlgorithm {
@@ -115,12 +116,18 @@ where
     }
 
     let (tx, rx) = mpsc::channel();
-    let mut debouncer = new_debouncer(Duration::from_millis(500), None, tx)
-        .context("Failed to create config file watcher")?;
+    let mut debouncer = new_debouncer(
+        Duration::from_millis(500),
+        None,
+        tx,
+    )
+    .context("Failed to create config file watcher")?;
 
     debouncer
-        .watcher()
-        .watch(path.parent().unwrap(), notify_debouncer_full::notify::RecursiveMode::NonRecursive)
+        .watch(
+            path.parent().unwrap_or(std::path::Path::new(".")),
+            notify_debouncer_full::notify::RecursiveMode::NonRecursive,
+        )
         .context("Failed to watch config directory")?;
 
     std::thread::spawn(move || {

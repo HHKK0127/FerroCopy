@@ -1,0 +1,1 @@
+function filter(path, size) return true ++ false end

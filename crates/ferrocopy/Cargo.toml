@@ -21,10 +21,24 @@ egui = "0.29"
 rfd = "0.15"
 winreg = "0.52"
 shellexpand = "3"
-windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
+windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_Com"] }
 fastrand = "2"
-notify-debouncer-full = "0.3"
+notify-debouncer-full = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 dirs = "6"
+parking_lot = "0.12"
+arboard = "3"
+crossbeam-channel = "0.5"
+ctrlc = "3"
+ssh2 = "0.9"
+notify = "8"
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+taffy = "0.5"
+wasmtime = "24"
+wasmtime-wasi = "24"
+polling = "3"
+
+[dev-dependencies]
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
