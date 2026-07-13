@@ -2,6 +2,7 @@ use crate::config::*;
 use crate::hash;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,12 +36,13 @@ pub fn collect_files(src: &Path, dest: &Path, recursive: bool) -> Result<Vec<(Pa
     }
 
     if src.is_file() {
-        let dest_path = if dest.is_dir() || dest.to_string_lossy().ends_with(std::path::MAIN_SEPARATOR_STR) {
-            dest.join(src.file_name().unwrap())
-        } else {
-            dest.to_path_buf()
-        };
-        pairs.push((src.to_path_buf(), dest_path));
+            let file_name = src.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+            let dest_path = if dest.is_dir() || dest.to_string_lossy().ends_with(std::path::MAIN_SEPARATOR_STR) {
+                dest.join(file_name)
+            } else {
+                dest.to_path_buf()
+            };
+            pairs.push((src.to_path_buf(), dest_path));
     } else if src.is_dir() {
         if !recursive {
             anyhow::bail!("Source is a directory. Use --recursive to copy directories.");
@@ -49,7 +51,8 @@ pub fn collect_files(src: &Path, dest: &Path, recursive: bool) -> Result<Vec<(Pa
         // If dest already exists and is a directory, copy INTO it (preserving src's folder name).
         // If dest doesn't exist, treat it as the new directory to create.
         let effective_dest: PathBuf = if dest.is_dir() {
-            dest.join(src.file_name().unwrap())
+            let folder_name = src.file_name().and_then(|n| n.to_str()).unwrap_or("folder");
+            dest.join(folder_name)
         } else {
             dest.to_path_buf()
         };
@@ -209,7 +212,7 @@ pub async fn copy_file(
         anyhow::bail!(
             "Failed to delete source after copy ({}): {:#}",
             src.display(),
-            last_err.unwrap()
+            last_err.as_ref().unwrap()
         )
     }
 

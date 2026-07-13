@@ -252,9 +252,11 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
+    let source = cli.source.clone().ok_or_else(|| anyhow::anyhow!("SOURCE is required"))?;
+    let destination = cli.destination.clone().ok_or_else(|| anyhow::anyhow!("DESTINATION is required"))?;
     let config = Arc::new(config::CopyConfig {
-        source: cli.source.clone().unwrap(),
-        destination: cli.destination.clone().unwrap(),
+        source: source.clone(),
+        destination: destination.clone(),
         verify: cli.verify,
         hash_algorithm: match cli.hash {
             HashAlgorithm::Blake3 => config::HashAlgorithm::Blake3,

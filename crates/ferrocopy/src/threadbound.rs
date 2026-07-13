@@ -70,10 +70,9 @@ impl ThreadReceiver {
     pub fn run_forever(&self) {
         loop {
             let rx = self.receiver.lock().unwrap();
-            while let Ok(task) = rx.recv() {
+            if let Ok(task) = rx.recv() {
                 drop(rx);
                 task();
-                break;
             }
         }
     }
