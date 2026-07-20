@@ -3,13 +3,13 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
-use yserver_engine::engine::compositor::Compositor;
-use yserver_engine::engine::core_loop::{channel, run_frame, EngineReceiver, EngineSender};
-use yserver_engine::engine::message::{LayerDescriptor, Message};
-use yserver_engine::engine::state::EngineState;
-use yserver_engine::engine::telemetry::EngineTelemetry;
-use yserver_engine::input::translate_window_event;
-use yserver_engine::render::wgpu_backend::WgpuBackend;
+use quadcomp::engine::compositor::Compositor;
+use quadcomp::engine::core_loop::{channel, run_frame, EngineReceiver, EngineSender};
+use quadcomp::engine::message::{LayerDescriptor, Message};
+use quadcomp::engine::state::EngineState;
+use quadcomp::engine::telemetry::EngineTelemetry;
+use quadcomp::input::translate_window_event;
+use quadcomp::render::wgpu_backend::WgpuBackend;
 
 struct App {
     window: Option<Window>,
@@ -32,7 +32,7 @@ impl ApplicationHandler for App {
 
         let window = event_loop
             .create_window(
-                Window::default_attributes().with_title("Yserver Engine — Phase 2"),
+                Window::default_attributes().with_title("QuadComp — Phase 2"),
             )
             .expect("failed to create window");
 

@@ -1,4 +1,4 @@
-//! Input abstraction layer for yserver-engine.
+//! Input abstraction layer for QuadComp.
 //!
 //! Translates winit input events into the engine's message protocol.
 //! Supports keyboard, mouse, and touch input sources.

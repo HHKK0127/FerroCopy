@@ -1,4 +1,4 @@
-//! Platform abstraction layer for yserver-engine.
+//! Platform abstraction layer for QuadComp.
 //!
 //! Provides OS-specific surface creation and clipboard access.
 //! Currently supports Windows (Win32); stubs for other platforms.

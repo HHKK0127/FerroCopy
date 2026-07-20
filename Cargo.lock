@@ -6557,7 +6557,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "yserver-engine"
+name = "quadcomp"
 version = "0.1.0"
 dependencies = [
  "cfg-if",

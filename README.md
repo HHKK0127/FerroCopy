@@ -56,7 +56,7 @@ ferrocopy (workspace — 6 crates)
 ├── crates/engine-ffi           → cdylib: extern "C" × 5
 ├── crates/tui-test             → Ratatui TUI (7-panel layout)
 ├── crates/ferrocopy-hook       → COM DLL shell extension
-├── crates/yserver-engine       → wgpu GPU render engine
+├── crates/quadcomp             → wgpu GPU render engine
 └── assets/ico_builder          → Icon builder
 
 ferrocopy_desktop (Flutter Desktop — 11 files)
@@ -288,7 +288,7 @@ pub struct Shutdown {
 | Hot-Reload | notify-debouncer-full |
 | Lua | mlua |
 | WASM | wasmtime |
-| GPU | wgpu (yserver-engine) |
+| GPU | wgpu (quadcomp) |
 
 ## Project History
 
@@ -481,7 +481,7 @@ ferrocopy (workspace — 6 crates)
 ├── crates/engine-ffi           → cdylib: extern "C" × 5
 ├── crates/tui-test             → ⭐ Ratatui TUI (7分割レイアウト)
 ├── crates/ferrocopy-hook       → COM DLL シェル拡張
-├── crates/yserver-engine       → wgpu GPU 描画エンジン
+├── crates/quadcomp             → wgpu GPU 描画エンジン
 └── assets/ico_builder          → アイコンビルドツール
 
 ferrocopy_desktop (Flutter Desktop — 11 UI ファイル)
@@ -638,7 +638,7 @@ while let Some(event) = rx.recv() {
 | ホットリロード | notify-debouncer-full |
 | Lua | mlua |
 | WASM | wasmtime |
-| GPU | wgpu (yserver-engine) |
+| GPU | wgpu (quadcomp) |
 | I/O プール | crossbeam-channel, thread_local |
 | イベントチャネル | crossbeam-channel (CoreSender/CoreReceiver) |
 
